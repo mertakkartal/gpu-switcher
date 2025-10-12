@@ -1,0 +1,15 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# Logs
+logs/
+*.log
+
+# Editor junk
+*.swp
+*.bak
+
+# OS
+.DS_Store
+Thumbs.db
