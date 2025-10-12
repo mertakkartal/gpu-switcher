@@ -357,4 +357,4 @@ This tool automates all those manual `nvidia-settings` tweaks, persists them, an
 ## 💬 Feedback
 
 Issues & discussions:  
-👉 [GitHub Issues](https://github.com/yourusername/gpu-switcher/issues)
+👉 [GitHub Issues](https://github.com/mertakkartal/gpu-switcher/issues)
