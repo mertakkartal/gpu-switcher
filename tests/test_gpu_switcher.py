@@ -1,62 +1,15 @@
-# M4K: test modülü oluşturuldu; gpu-switcher.py'deki saf ve mock'lanabilir fonksiyonları kapsar
+# M4K: test modülü gpu_core modülünü import edecek şekilde güncellendi (refactor sonrası)
 import os
 import sys
 import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
-# M4K: GTK/GLib/Gio C-extension'ları headless ortamda yüklenemez; modül yüklenmeden önce stub'lar eklendi
-import importlib
-import importlib.util
-import types
+# M4K: kök dizin path'e eklendi; gpu_core ve gpu_config doğrudan import edilebiliyor
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-def _make_gtk_stubs():
-    # M4K: gi ve gi.repository için minimal sahte modüller oluşturuldu
-    gi_mod = types.ModuleType("gi")
-    gi_mod.require_version = lambda name, ver: None
-    sys.modules["gi"] = gi_mod
-
-    repo_mod = types.ModuleType("gi.repository")
-    sys.modules["gi.repository"] = repo_mod
-
-    # M4K: Gtk, GLib, Gio için stub class'lar tanımlandı — sadece import'u geçmesi yeterli
-    for name in ("Gtk", "GLib", "Gio"):
-        stub = types.ModuleType(name)
-        # Gerekli sabitler / sınıflar
-        stub.Application = object
-        stub.ApplicationWindow = object
-        stub.ApplicationFlags = types.SimpleNamespace(FLAGS_NONE=0)
-        stub.Orientation = types.SimpleNamespace(VERTICAL=0, HORIZONTAL=1)
-        stub.PolicyType = types.SimpleNamespace(AUTOMATIC=0)
-        stub.TextView = object
-        stub.TextBuffer = object
-        stub.Frame = object
-        stub.Box = object
-        stub.Grid = object
-        stub.Label = object
-        stub.CheckButton = object
-        stub.RadioButton = object
-        stub.Entry = object
-        stub.Button = object
-        stub.HeaderBar = object
-        stub.ComboBoxText = object
-        stub.ScrolledWindow = object
-        stub.idle_add = lambda fn: None
-        stub.timeout_add_seconds = lambda t, fn: None
-        stub.source_remove = lambda tid: None
-        setattr(repo_mod, name, stub)
-        sys.modules[f"gi.repository.{name}"] = stub
-
-_make_gtk_stubs()
-
-# M4K: tire içeren dosya adı (gpu-switcher.py) standart import ile yüklenemiyor; importlib kullanıldı
-_spec = importlib.util.spec_from_file_location(
-    "gpu_switcher",
-    os.path.join(os.path.dirname(__file__), "..", "gpu-switcher.py"),
-)
-gs = importlib.util.module_from_spec(_spec)
-sys.modules["gpu_switcher"] = gs
-_spec.loader.exec_module(gs)
+# M4K: config.yaml olmayan ortamda gpu_config boş dict döndürür; testler etkilenmez
+import gpu_core as gs  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -131,21 +84,21 @@ class TestRunCmd(unittest.TestCase):
 
 class TestDetectPrimeMode(unittest.TestCase):
     # M4K: prime-select yokken 'unknown' döndürüldüğü doğrulandı
-    @patch("gpu_switcher.have", return_value=False)
+    @patch("gpu_core.have", return_value=False)
     def test_no_prime_select_returns_unknown(self, _mock_have):
         result = gs.detect_prime_mode()
         self.assertEqual(result, "unknown")
 
     # M4K: prime-select var ve 'nvidia' döndürüyorsa parse edildiği test edildi
-    @patch("gpu_switcher.run_cmd", return_value=(0, "nvidia", ""))
-    @patch("gpu_switcher.have", return_value=True)
+    @patch("gpu_core.run_cmd", return_value=(0, "nvidia", ""))
+    @patch("gpu_core.have", return_value=True)
     def test_prime_select_returns_nvidia(self, _mock_have, _mock_run):
         result = gs.detect_prime_mode()
         self.assertEqual(result, "nvidia")
 
     # M4K: prime-select başarısız olunca 'unknown' döndürüldüğü test edildi
-    @patch("gpu_switcher.run_cmd", return_value=(1, "", "error"))
-    @patch("gpu_switcher.have", return_value=True)
+    @patch("gpu_core.run_cmd", return_value=(1, "", "error"))
+    @patch("gpu_core.have", return_value=True)
     def test_prime_select_fail_returns_unknown(self, _mock_have, _mock_run):
         result = gs.detect_prime_mode()
         self.assertEqual(result, "unknown")
@@ -153,21 +106,21 @@ class TestDetectPrimeMode(unittest.TestCase):
 
 class TestDetectDisplayOutput(unittest.TestCase):
     # M4K: xrandr yokken varsayılan 'HDMI-0' döndürüldüğü doğrulandı
-    @patch("gpu_switcher.have", return_value=False)
+    @patch("gpu_core.have", return_value=False)
     def test_no_xrandr_returns_hdmi0(self, _mock_have):
         result = gs.detect_display_output()
         self.assertEqual(result, "HDMI-0")
 
     # M4K: xrandr çıktısında HDMI bağlı çıkış varsa doğru parse edildiği test edildi
-    @patch("gpu_switcher.run_cmd", return_value=(0, "HDMI-1 connected primary 1920x1080+0+0", ""))
-    @patch("gpu_switcher.have", return_value=True)
+    @patch("gpu_core.run_cmd", return_value=(0, "HDMI-1 connected primary 1920x1080+0+0", ""))
+    @patch("gpu_core.have", return_value=True)
     def test_connected_hdmi_detected(self, _mock_have, _mock_run):
         result = gs.detect_display_output()
         self.assertEqual(result, "HDMI-1")
 
     # M4K: xrandr başarısız olunca 'HDMI-0' fallback döndürüldüğü test edildi
-    @patch("gpu_switcher.run_cmd", return_value=(1, "", "error"))
-    @patch("gpu_switcher.have", return_value=True)
+    @patch("gpu_core.run_cmd", return_value=(1, "", "error"))
+    @patch("gpu_core.have", return_value=True)
     def test_xrandr_fail_returns_hdmi0(self, _mock_have, _mock_run):
         result = gs.detect_display_output()
         self.assertEqual(result, "HDMI-0")
@@ -175,7 +128,7 @@ class TestDetectDisplayOutput(unittest.TestCase):
 
 class TestFetchNvidiaTelemetry(unittest.TestCase):
     # M4K: nvidia-smi yokken boş Telemetry nesnesi döndürüldüğü doğrulandı
-    @patch("gpu_switcher.have", return_value=False)
+    @patch("gpu_core.have", return_value=False)
     def test_no_nvidia_smi_returns_empty_telemetry(self, _mock_have):
         tele = gs.fetch_nvidia_telemetry()
         self.assertIsNone(tele.tempC)
@@ -183,8 +136,8 @@ class TestFetchNvidiaTelemetry(unittest.TestCase):
         self.assertIsNone(tele.pwrW)
 
     # M4K: geçerli nvidia-smi çıktısı doğru parse edildi
-    @patch("gpu_switcher.run_cmd", return_value=(0, "65, 1500, 45, 120.5, 200.0", ""))
-    @patch("gpu_switcher.have", return_value=True)
+    @patch("gpu_core.run_cmd", return_value=(0, "65, 1500, 45, 120.5, 200.0", ""))
+    @patch("gpu_core.have", return_value=True)
     def test_valid_smi_output_parsed(self, _mock_have, _mock_run):
         tele = gs.fetch_nvidia_telemetry()
         self.assertEqual(tele.tempC, 65.0)
@@ -194,8 +147,8 @@ class TestFetchNvidiaTelemetry(unittest.TestCase):
         self.assertAlmostEqual(tele.pwrCap, 200.0)
 
     # M4K: fan değeri "N/A" olduğunda fanPct=None, fanRaw="N/A" olmalı
-    @patch("gpu_switcher.run_cmd", return_value=(0, "70, 1800, N/A, 150.0, 200.0", ""))
-    @patch("gpu_switcher.have", return_value=True)
+    @patch("gpu_core.run_cmd", return_value=(0, "70, 1800, N/A, 150.0, 200.0", ""))
+    @patch("gpu_core.have", return_value=True)
     def test_fan_na_handled(self, _mock_have, _mock_run):
         tele = gs.fetch_nvidia_telemetry()
         self.assertIsNone(tele.fanPct)
