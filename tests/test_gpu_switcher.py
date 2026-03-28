@@ -1,14 +1,14 @@
-# M4K: test modülü gpu_core modülünü import edecek şekilde güncellendi (refactor sonrası)
+# M4K: test modülü gpu_core modülünü import edecek şekilde güncellendi (refactor sonrası) / test module updated to import gpu_core after refactor
 import os
 import sys
 import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
-# M4K: kök dizin path'e eklendi; gpu_core ve gpu_config doğrudan import edilebiliyor
+# M4K: kök dizin path'e eklendi; gpu_core ve gpu_config doğrudan import edilebiliyor / root directory added to path; gpu_core and gpu_config can be imported directly
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-# M4K: config.yaml olmayan ortamda gpu_config boş dict döndürür; testler etkilenmez
+# M4K: config.yaml olmayan ortamda gpu_config boş dict döndürür; testler etkilenmez / gpu_config returns empty dict when config.yaml is missing; tests are unaffected
 import gpu_core as gs  # noqa: E402
 
 
@@ -17,43 +17,43 @@ import gpu_core as gs  # noqa: E402
 # ---------------------------------------------------------------------------
 
 class TestParseFloatSafe(unittest.TestCase):
-    # M4K: geçerli sayı string'i için float dönüşü test edildi
+    # M4K: geçerli sayı string'i için float dönüşü test edildi / float conversion tested for a valid integer string
     def test_valid_integer_string(self):
         self.assertEqual(gs.parse_float_safe("42"), 42.0)
 
-    # M4K: ondalıklı sayı string'i için float dönüşü test edildi
+    # M4K: ondalıklı sayı string'i için float dönüşü test edildi / float conversion tested for a decimal string
     def test_valid_float_string(self):
         self.assertAlmostEqual(gs.parse_float_safe("3.14"), 3.14)
 
-    # M4K: "N/A" gibi geçersiz değerlerin None döndürdüğü doğrulandı
+    # M4K: "N/A" gibi geçersiz değerlerin None döndürdüğü doğrulandı / invalid values like "N/A" verified to return None
     def test_invalid_string_returns_none(self):
         self.assertIsNone(gs.parse_float_safe("N/A"))
 
-    # M4K: boş string için None dönüşü test edildi
+    # M4K: boş string için None dönüşü test edildi / None return tested for empty string
     def test_empty_string_returns_none(self):
         self.assertIsNone(gs.parse_float_safe(""))
 
-    # M4K: negatif sayı string'i desteklenmeli
+    # M4K: negatif sayı string'i desteklenmeli / negative number strings should be supported
     def test_negative_value(self):
         self.assertEqual(gs.parse_float_safe("-10.5"), -10.5)
 
 
 class TestHaveAndWhich(unittest.TestCase):
-    # M4K: PATH'te kesin var olan 'sh' komutu ile have() doğrulandı
+    # M4K: PATH'te kesin var olan 'sh' komutu ile have() doğrulandı / have() verified with 'sh' which is guaranteed to exist in PATH
     def test_have_existing_command(self):
         self.assertTrue(gs.have("sh"))
 
-    # M4K: var olmayan komut için False dönüşü test edildi
+    # M4K: var olmayan komut için False dönüşü test edildi / False return tested for a non-existent command
     def test_have_nonexistent_command(self):
         self.assertFalse(gs.have("__no_such_cmd_xyz__"))
 
-    # M4K: which() var olan komut için string path döndürmeli
+    # M4K: which() var olan komut için string path döndürmeli / which() should return a string path for an existing command
     def test_which_returns_path_for_existing(self):
         result = gs.which("sh")
         self.assertIsNotNone(result)
         self.assertTrue(result.startswith("/"))
 
-    # M4K: which() var olmayan komut için None döndürmeli
+    # M4K: which() var olmayan komut için None döndürmeli / which() should return None for a missing command
     def test_which_returns_none_for_missing(self):
         self.assertIsNone(gs.which("__no_such_cmd_xyz__"))
 
@@ -63,19 +63,19 @@ class TestHaveAndWhich(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestRunCmd(unittest.TestCase):
-    # M4K: başarılı komut çalıştırmada rc=0 ve stdout doğrulandı
+    # M4K: başarılı komut çalıştırmada rc=0 ve stdout doğrulandı / rc=0 and stdout verified for a successful command
     def test_successful_command(self):
         rc, out, err = gs.run_cmd("echo hello")
         self.assertEqual(rc, 0)
         self.assertEqual(out, "hello")
         self.assertEqual(err, "")
 
-    # M4K: var olmayan komutun hata döndürdüğü doğrulandı (rc != 0)
+    # M4K: var olmayan komutun hata döndürdüğü doğrulandı (rc != 0) / error return (rc != 0) verified for a non-existent command
     def test_nonexistent_command_returns_error(self):
         rc, out, err = gs.run_cmd("__no_such_cmd_xyz__")
         self.assertNotEqual(rc, 0)
 
-    # M4K: timeout aşımında (1ms) rc=1 ve err string döndürüldüğü test edildi
+    # M4K: timeout aşımında (1ms) rc=1 ve err string döndürüldüğü test edildi / rc=1 and err string tested when timeout is exceeded
     def test_timeout_returns_error(self):
         rc, out, err = gs.run_cmd("sleep 60", timeout=1)
         self.assertEqual(rc, 1)
@@ -83,20 +83,20 @@ class TestRunCmd(unittest.TestCase):
 
 
 class TestDetectPrimeMode(unittest.TestCase):
-    # M4K: prime-select yokken 'unknown' döndürüldüğü doğrulandı
+    # M4K: prime-select yokken 'unknown' döndürüldüğü doğrulandı / 'unknown' verified when prime-select is not found
     @patch("gpu_core.have", return_value=False)
     def test_no_prime_select_returns_unknown(self, _mock_have):
         result = gs.detect_prime_mode()
         self.assertEqual(result, "unknown")
 
-    # M4K: prime-select var ve 'nvidia' döndürüyorsa parse edildiği test edildi
+    # M4K: prime-select var ve 'nvidia' döndürüyorsa parse edildiği test edildi / parsing tested when prime-select returns 'nvidia'
     @patch("gpu_core.run_cmd", return_value=(0, "nvidia", ""))
     @patch("gpu_core.have", return_value=True)
     def test_prime_select_returns_nvidia(self, _mock_have, _mock_run):
         result = gs.detect_prime_mode()
         self.assertEqual(result, "nvidia")
 
-    # M4K: prime-select başarısız olunca 'unknown' döndürüldüğü test edildi
+    # M4K: prime-select başarısız olunca 'unknown' döndürüldüğü test edildi / 'unknown' return tested when prime-select fails
     @patch("gpu_core.run_cmd", return_value=(1, "", "error"))
     @patch("gpu_core.have", return_value=True)
     def test_prime_select_fail_returns_unknown(self, _mock_have, _mock_run):
@@ -105,20 +105,20 @@ class TestDetectPrimeMode(unittest.TestCase):
 
 
 class TestDetectDisplayOutput(unittest.TestCase):
-    # M4K: xrandr yokken varsayılan 'HDMI-0' döndürüldüğü doğrulandı
+    # M4K: xrandr yokken varsayılan 'HDMI-0' döndürüldüğü doğrulandı / default 'HDMI-0' verified when xrandr is not found
     @patch("gpu_core.have", return_value=False)
     def test_no_xrandr_returns_hdmi0(self, _mock_have):
         result = gs.detect_display_output()
         self.assertEqual(result, "HDMI-0")
 
-    # M4K: xrandr çıktısında HDMI bağlı çıkış varsa doğru parse edildiği test edildi
+    # M4K: xrandr çıktısında HDMI bağlı çıkış varsa doğru parse edildiği test edildi / correct parsing tested when xrandr output shows a connected HDMI
     @patch("gpu_core.run_cmd", return_value=(0, "HDMI-1 connected primary 1920x1080+0+0", ""))
     @patch("gpu_core.have", return_value=True)
     def test_connected_hdmi_detected(self, _mock_have, _mock_run):
         result = gs.detect_display_output()
         self.assertEqual(result, "HDMI-1")
 
-    # M4K: xrandr başarısız olunca 'HDMI-0' fallback döndürüldüğü test edildi
+    # M4K: xrandr başarısız olunca 'HDMI-0' fallback döndürüldüğü test edildi / 'HDMI-0' fallback tested when xrandr fails
     @patch("gpu_core.run_cmd", return_value=(1, "", "error"))
     @patch("gpu_core.have", return_value=True)
     def test_xrandr_fail_returns_hdmi0(self, _mock_have, _mock_run):
@@ -127,7 +127,7 @@ class TestDetectDisplayOutput(unittest.TestCase):
 
 
 class TestFetchNvidiaTelemetry(unittest.TestCase):
-    # M4K: nvidia-smi yokken boş Telemetry nesnesi döndürüldüğü doğrulandı
+    # M4K: nvidia-smi yokken boş Telemetry nesnesi döndürüldüğü doğrulandı / empty Telemetry object verified when nvidia-smi is not found
     @patch("gpu_core.have", return_value=False)
     def test_no_nvidia_smi_returns_empty_telemetry(self, _mock_have):
         tele = gs.fetch_nvidia_telemetry()
@@ -135,7 +135,7 @@ class TestFetchNvidiaTelemetry(unittest.TestCase):
         self.assertIsNone(tele.clkMHz)
         self.assertIsNone(tele.pwrW)
 
-    # M4K: geçerli nvidia-smi çıktısı doğru parse edildi
+    # M4K: geçerli nvidia-smi çıktısı doğru parse edildi / valid nvidia-smi output parsed correctly
     @patch("gpu_core.run_cmd", return_value=(0, "65, 1500, 45, 120.5, 200.0", ""))
     @patch("gpu_core.have", return_value=True)
     def test_valid_smi_output_parsed(self, _mock_have, _mock_run):
@@ -146,7 +146,7 @@ class TestFetchNvidiaTelemetry(unittest.TestCase):
         self.assertAlmostEqual(tele.pwrW, 120.5)
         self.assertAlmostEqual(tele.pwrCap, 200.0)
 
-    # M4K: fan değeri "N/A" olduğunda fanPct=None, fanRaw="N/A" olmalı
+    # M4K: fan değeri "N/A" olduğunda fanPct=None, fanRaw="N/A" olmalı / when fan value is "N/A", fanPct should be None and fanRaw should be "N/A"
     @patch("gpu_core.run_cmd", return_value=(0, "70, 1800, N/A, 150.0, 200.0", ""))
     @patch("gpu_core.have", return_value=True)
     def test_fan_na_handled(self, _mock_have, _mock_run):
@@ -161,7 +161,7 @@ class TestFetchNvidiaTelemetry(unittest.TestCase):
 
 class TestAutostart(unittest.TestCase):
     def setUp(self):
-        # M4K: gerçek ~/.config/autostart'a dokunmamak için geçici dizin kullanıldı
+        # M4K: gerçek ~/.config/autostart'a dokunmamak için geçici dizin kullanıldı / temporary directory used to avoid touching real ~/.config/autostart
         self.tmp_dir = tempfile.mkdtemp()
         self.orig_desktop = gs.AUTOSTART_DESKTOP
         self.orig_dir = gs.AUTOSTART_DIR
@@ -169,22 +169,22 @@ class TestAutostart(unittest.TestCase):
         gs.AUTOSTART_DESKTOP = os.path.join(self.tmp_dir, "nvidia-comp-pipeline.desktop")
 
     def tearDown(self):
-        # M4K: test sonrası sabitler eski değerlerine geri alındı
+        # M4K: test sonrası sabitler eski değerlerine geri alındı / constants restored to original values after each test
         gs.AUTOSTART_DIR = self.orig_dir
         gs.AUTOSTART_DESKTOP = self.orig_desktop
 
-    # M4K: autostart_exists() dosya olmadığında False döndürmeli
+    # M4K: autostart_exists() dosya olmadığında False döndürmeli / autostart_exists() should return False when file is absent
     def test_autostart_not_exists_initially(self):
         self.assertFalse(gs.autostart_exists())
 
-    # M4K: install_autostart() sonrası dosyanın oluşturulduğu doğrulandı
+    # M4K: install_autostart() sonrası dosyanın oluşturulduğu doğrulandı / file creation verified after install_autostart()
     def test_install_autostart_creates_file(self):
         logger = MagicMock()
         result = gs.install_autostart("HDMI-1", logger)
         self.assertTrue(result)
         self.assertTrue(os.path.exists(gs.AUTOSTART_DESKTOP))
 
-    # M4K: install_autostart() dosyasının doğru içerik yazdığı test edildi
+    # M4K: install_autostart() dosyasının doğru içerik yazdığı test edildi / correct file content tested after install_autostart()
     def test_install_autostart_file_content(self):
         logger = MagicMock()
         gs.install_autostart("HDMI-1", logger)
@@ -194,12 +194,12 @@ class TestAutostart(unittest.TestCase):
         self.assertIn("ForceCompositionPipeline=On", content)
         self.assertIn("[Desktop Entry]", content)
 
-    # M4K: install_autostart() sonrası autostart_exists() True döndürmeli
+    # M4K: install_autostart() sonrası autostart_exists() True döndürmeli / autostart_exists() should return True after install_autostart()
     def test_autostart_exists_after_install(self):
         gs.install_autostart("HDMI-1", MagicMock())
         self.assertTrue(gs.autostart_exists())
 
-    # M4K: remove_autostart() dosyayı sildikten sonra autostart_exists() False döndürmeli
+    # M4K: remove_autostart() dosyayı sildikten sonra autostart_exists() False döndürmeli / autostart_exists() should return False after remove_autostart() deletes the file
     def test_remove_autostart_deletes_file(self):
         gs.install_autostart("HDMI-1", MagicMock())
         logger = MagicMock()
@@ -207,7 +207,7 @@ class TestAutostart(unittest.TestCase):
         self.assertTrue(result)
         self.assertFalse(os.path.exists(gs.AUTOSTART_DESKTOP))
 
-    # M4K: dosya yokken remove_autostart() yine True döndürmeli (idempotent)
+    # M4K: dosya yokken remove_autostart() yine True döndürmeli (idempotent) / remove_autostart() should still return True when file does not exist (idempotent)
     def test_remove_autostart_idempotent(self):
         logger = MagicMock()
         result = gs.remove_autostart(logger)
@@ -222,7 +222,7 @@ class TestGpuController(unittest.TestCase):
     """gpu_controller.GpuController için birim testler."""
 
     def setUp(self):
-        # M4K: controller testleri için gerçek profil dosyasına dokunmamak adına tmp dizin kullanıldı
+        # M4K: controller testleri için gerçek profil dosyasına dokunmamak adına tmp dizin kullanıldı / temporary directory used so controller tests do not touch the real profile file
         from gpu_controller import GpuController
         import gpu_controller as gc_mod
         self.tmp_dir = tempfile.mkdtemp()
@@ -238,11 +238,11 @@ class TestGpuController(unittest.TestCase):
         import gpu_controller as gc_mod
         gc_mod.PROFILES_PATH = self._orig_path
 
-    # M4K: başlangıçta profil listesinin boş olduğu doğrulandı
+    # M4K: başlangıçta profil listesinin boş olduğu doğrulandı / profile list verified to be empty at startup
     def test_initial_profiles_empty(self):
         self.assertEqual(self.ctrl.get_profiles(), [])
 
-    # M4K: profil kaydedilince listede göründüğü doğrulandı
+    # M4K: profil kaydedilince listede göründüğü doğrulandı / saved profile verified to appear in the list
     def test_save_and_get_profile(self):
         from gpu_controller import GpuProfile
         p = GpuProfile(name="Gaming", prime_mode="nvidia", comp_pipeline=True)
@@ -252,7 +252,7 @@ class TestGpuController(unittest.TestCase):
         self.assertEqual(profiles[0].name, "Gaming")
         self.assertEqual(profiles[0].prime_mode, "nvidia")
 
-    # M4K: aynı isimli profil üzerine yazılınca liste uzunluğu değişmemeli
+    # M4K: aynı isimli profil üzerine yazılınca liste uzunluğu değişmemeli / list length must not change when a profile with the same name is overwritten
     def test_save_profile_overwrites_same_name(self):
         from gpu_controller import GpuProfile
         self.ctrl.save_profile(GpuProfile(name="Test", prime_mode="intel"))
@@ -261,19 +261,19 @@ class TestGpuController(unittest.TestCase):
         self.assertEqual(len(profiles), 1)
         self.assertEqual(profiles[0].prime_mode, "nvidia")
 
-    # M4K: profil silinince listeden kalktığı doğrulandı
+    # M4K: profil silinince listeden kalktığı doğrulandı / profile verified to be removed from the list after deletion
     def test_delete_profile(self):
         from gpu_controller import GpuProfile
         self.ctrl.save_profile(GpuProfile(name="ToDelete"))
         self.ctrl.delete_profile("ToDelete")
         self.assertEqual(self.ctrl.get_profiles(), [])
 
-    # M4K: var olmayan profil silinmeye çalışılınca hata fırlatılmıyor
+    # M4K: var olmayan profil silinmeye çalışılınca hata fırlatılmıyor / no error raised when deleting a non-existent profile
     def test_delete_nonexistent_profile_is_safe(self):
         result = self.ctrl.delete_profile("ghost")
         self.assertIsNotNone(result)
 
-    # M4K: kaydedilen profil dosyadan tekrar okunabiliyor (kalıcılık testi)
+    # M4K: kaydedilen profil dosyadan tekrar okunabiliyor (kalıcılık testi) / saved profile can be read back from disk (persistence test)
     def test_profile_persistence(self):
         from gpu_controller import GpuProfile, GpuController
         import gpu_controller as gc_mod
@@ -287,7 +287,7 @@ class TestGpuController(unittest.TestCase):
         self.assertEqual(profiles[0].name, "Persist")
         self.assertTrue(profiles[0].full_rgb)
 
-    # M4K: async apply başlatılınca on_done callback'inin çağrıldığı doğrulandı
+    # M4K: async apply başlatılınca on_done callback'inin çağrıldığı doğrulandı / on_done callback verified to be called when async apply is started
     def test_apply_async_calls_on_done(self):
         import time
         from gpu_controller import ApplySettings
@@ -315,7 +315,7 @@ class TestGpuController(unittest.TestCase):
                 on_log=lambda level, msg: None,
                 on_done=lambda success: done_results.append(success),
             )
-            # M4K: thread tamamlanana kadar bekleniyor (max 2s)
+            # M4K: thread tamamlanana kadar bekleniyor (max 2s) / waiting for thread to complete (max 2s)
             for _ in range(20):
                 if done_results:
                     break

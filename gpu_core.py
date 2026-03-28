@@ -6,7 +6,7 @@ GPU Switcher uygulamasının tüm sistem çağrıları, algılama ve uygulama
 mantığı burada toplanır. GTK veya UI bağımlılığı yoktur.
 """
 
-# M4K: business logic gpu-switcher.py'den ayrı bir modüle taşındı; UI bağımlılığı sıfır
+# M4K: business logic gpu-switcher.py'den ayrı bir modüle taşındı; UI bağımlılığı sıfır / business logic extracted to a separate module from gpu-switcher.py; zero UI dependency
 import os
 import shlex
 import subprocess
@@ -15,25 +15,25 @@ from typing import Callable, Optional, Tuple
 
 from gpu_config import load_config
 
-# M4K: config yüklenerek hardcoded sabitler dışa taşındı
+# M4K: config yüklenerek hardcoded sabitler dışa taşındı / config loaded so hardcoded constants are externalized
 _cfg = load_config()
 
 APP_TAG: str = _cfg.get("app_tag", "[gpu-switcher]")
 
-# M4K: autostart sabitleri config'den okunuyor; yoksa varsayılan kullanılır
+# M4K: autostart sabitleri config'den okunuyor; yoksa varsayılan kullanılır / autostart constants read from config; falls back to defaults if missing
 AUTOSTART_DIR: str = os.path.expanduser(
     _cfg.get("autostart_dir", "~/.config/autostart")
 )
 AUTOSTART_DESKTOP: str = os.path.join(AUTOSTART_DIR, "nvidia-comp-pipeline.desktop")
 
-# M4K: autostart komutu config'den okunuyor; %s placeholder kullanıldı — {} nvidia syntax ile çakışmaması için
+# M4K: autostart komutu config'den okunuyor; %s placeholder kullanıldı — {} nvidia syntax ile çakışmaması için / autostart command read from config; %s placeholder used to avoid conflict with nvidia-settings {} syntax
 AUTOSTART_CMD: str = _cfg.get(
     "autostart_cmd",
     'nvidia-settings --assign CurrentMetaMode="%s: 3840x2160_60 +0+0 '
     '{ForceCompositionPipeline=On, ForceFullCompositionPipeline=On}"',
 )
 
-# M4K: komut timeout'ları config'den okunuyor
+# M4K: komut timeout'ları config'den okunuyor / command timeouts read from config
 _DEFAULT_TIMEOUT: int = _cfg.get("default_cmd_timeout", 10)
 _TELEMETRY_TIMEOUT: int = _cfg.get("telemetry_cmd_timeout", 3)
 
@@ -44,7 +44,7 @@ _TELEMETRY_TIMEOUT: int = _cfg.get("telemetry_cmd_timeout", 3)
 
 def which(cmd: str) -> Optional[str]:
     """Komutun PATH içindeki tam yolunu döndürür, bulunamazsa None."""
-    # M4K: gpu-switcher.py'deki which() aynen taşındı
+    # M4K: gpu-switcher.py'deki which() aynen taşındı / which() migrated as-is from gpu-switcher.py
     for p in os.environ.get("PATH", "").split(os.pathsep):
         fp = os.path.join(p, cmd)
         if os.path.isfile(fp) and os.access(fp, os.X_OK):
@@ -54,7 +54,7 @@ def which(cmd: str) -> Optional[str]:
 
 def run_cmd(cmd: str, timeout: int = _DEFAULT_TIMEOUT) -> Tuple[int, str, str]:
     """Shell komutunu güvenli biçimde çalıştırır; (rc, stdout, stderr) döner."""
-    # M4K: gpu-switcher.py'deki run_cmd() aynen taşındı
+    # M4K: gpu-switcher.py'deki run_cmd() aynen taşındı / run_cmd() migrated as-is from gpu-switcher.py
     try:
         proc = subprocess.run(
             shlex.split(cmd),
@@ -72,12 +72,12 @@ def run_cmd(cmd: str, timeout: int = _DEFAULT_TIMEOUT) -> Tuple[int, str, str]:
 
 def have(cmd: str) -> bool:
     """Komutun PATH'te var olup olmadığını kontrol eder."""
-    # M4K: gpu-switcher.py'deki have() aynen taşındı
+    # M4K: gpu-switcher.py'deki have() aynen taşındı / have() migrated as-is from gpu-switcher.py
     return which(cmd) is not None
 
 
 def ensure_dir(path: str) -> None:
-    # M4K: gpu-switcher.py'deki ensure_dir() aynen taşındı
+    # M4K: gpu-switcher.py'deki ensure_dir() aynen taşındı / ensure_dir() migrated as-is from gpu-switcher.py
     try:
         os.makedirs(path, exist_ok=True)
     except Exception:
@@ -93,7 +93,7 @@ def detect_display_output() -> str:
     Bağlı ekran çıkışını algılar; önce HDMI/DP tercih edilir,
     bulunamazsa 'HDMI-0' döner.
     """
-    # M4K: gpu-switcher.py'deki detect_display_output() aynen taşındı
+    # M4K: gpu-switcher.py'deki detect_display_output() aynen taşındı / detect_display_output() migrated as-is from gpu-switcher.py
     if not have("xrandr"):
         return "HDMI-0"
     rc, out, _ = run_cmd("xrandr --verbose")
@@ -116,7 +116,7 @@ def detect_display_output() -> str:
 
 def detect_prime_mode() -> str:
     """prime-select mevcut modunu döndürür; yoksa 'unknown'."""
-    # M4K: gpu-switcher.py'deki detect_prime_mode() aynen taşındı
+    # M4K: gpu-switcher.py'deki detect_prime_mode() aynen taşındı / detect_prime_mode() migrated as-is from gpu-switcher.py
     if not have("prime-select"):
         return "unknown"
     rc, out, _ = run_cmd("prime-select query")
@@ -131,7 +131,7 @@ def detect_prime_mode() -> str:
 
 @dataclass
 class Telemetry:
-    # M4K: Telemetry dataclass'ı gpu-switcher.py'den aynen taşındı
+    # M4K: Telemetry dataclass'ı gpu-switcher.py'den aynen taşındı / Telemetry dataclass migrated as-is from gpu-switcher.py
     tempC: Optional[float] = None
     clkMHz: Optional[float] = None
     fanPct: Optional[float] = None
@@ -141,7 +141,7 @@ class Telemetry:
 
 
 def parse_float_safe(s: str) -> Optional[float]:
-    # M4K: gpu-switcher.py'deki parse_float_safe() aynen taşındı
+    # M4K: gpu-switcher.py'deki parse_float_safe() aynen taşındı / parse_float_safe() migrated as-is from gpu-switcher.py
     try:
         return float(s)
     except Exception:
@@ -150,7 +150,7 @@ def parse_float_safe(s: str) -> Optional[float]:
 
 def fetch_nvidia_telemetry() -> Telemetry:
     """nvidia-smi üzerinden GPU telemetrisini çeker."""
-    # M4K: gpu-switcher.py'deki fetch_nvidia_telemetry() aynen taşındı
+    # M4K: gpu-switcher.py'deki fetch_nvidia_telemetry() aynen taşındı / fetch_nvidia_telemetry() migrated as-is from gpu-switcher.py
     tele = Telemetry()
     if not have("nvidia-smi"):
         return tele
@@ -182,7 +182,7 @@ Logger = Callable[[str], None]
 
 def apply_force_comp_pipeline(output_name: str, logger: Logger) -> bool:
     """ForceCompositionPipeline + FullCompositionPipeline ayarlar."""
-    # M4K: gpu-switcher.py'deki apply_force_comp_pipeline() aynen taşındı
+    # M4K: gpu-switcher.py'deki apply_force_comp_pipeline() aynen taşındı / apply_force_comp_pipeline() migrated as-is from gpu-switcher.py
     if not have("nvidia-settings"):
         logger("nvidia-settings not found; cannot apply composition pipeline.")
         return False
@@ -192,7 +192,7 @@ def apply_force_comp_pipeline(output_name: str, logger: Logger) -> bool:
     )
     rc, _, err = run_cmd(cmd)
     if rc != 0:
-        # M4K: fallback çözünürlük config'den okunuyor
+        # M4K: fallback çözünürlük config'den okunuyor / fallback resolution read from config
         res = _cfg.get("fallback_resolution", "3840x2160_60")
         cmd2 = (
             f'nvidia-settings --assign CurrentMetaMode="'
@@ -211,7 +211,7 @@ def apply_force_comp_pipeline(output_name: str, logger: Logger) -> bool:
 
 def apply_full_rgb(logger: Logger) -> bool:
     """ColorSpace=RGB ve ColorRange=Full ayarlar."""
-    # M4K: gpu-switcher.py'deki apply_full_rgb() aynen taşındı
+    # M4K: gpu-switcher.py'deki apply_full_rgb() aynen taşındı / apply_full_rgb() migrated as-is from gpu-switcher.py
     if not have("nvidia-settings"):
         logger("nvidia-settings not found; cannot apply color space/range.")
         return False
@@ -231,7 +231,7 @@ def apply_full_rgb(logger: Logger) -> bool:
 
 def set_persistence_mode(enable: bool, logger: Logger) -> bool:
     """NVIDIA persistence modunu etkinleştirir/devre dışı bırakır."""
-    # M4K: gpu-switcher.py'deki set_persistence_mode() aynen taşındı
+    # M4K: gpu-switcher.py'deki set_persistence_mode() aynen taşındı / set_persistence_mode() migrated as-is from gpu-switcher.py
     if not have("nvidia-smi"):
         logger("nvidia-smi not found; cannot set persistence mode.")
         return False
@@ -248,7 +248,7 @@ def set_locked_clocks(
     min_mhz: Optional[int], max_mhz: Optional[int], logger: Logger
 ) -> bool:
     """GPU saat hızlarını kilitler."""
-    # M4K: gpu-switcher.py'deki set_locked_clocks() aynen taşındı
+    # M4K: gpu-switcher.py'deki set_locked_clocks() aynen taşındı / set_locked_clocks() migrated as-is from gpu-switcher.py
     if min_mhz is None or max_mhz is None:
         logger("Locked clocks not requested (empty fields).")
         return True
@@ -265,7 +265,7 @@ def set_locked_clocks(
 
 def apply_prime(mode: str, logger: Logger) -> bool:
     """prime-select ile GPU modunu değiştirir."""
-    # M4K: gpu-switcher.py'deki apply_prime() aynen taşındı
+    # M4K: gpu-switcher.py'deki apply_prime() aynen taşındı / apply_prime() migrated as-is from gpu-switcher.py
     if not have("prime-select"):
         logger("prime-select not found; skipping PRIME mode switching.")
         return False
@@ -288,9 +288,9 @@ def apply_prime(mode: str, logger: Logger) -> bool:
 
 def install_autostart(output_name: str, logger: Logger) -> bool:
     """Composition pipeline autostart .desktop dosyasını yazar."""
-    # M4K: gpu-switcher.py'deki install_autostart() aynen taşındı; AUTOSTART_CMD config'den geliyor
+    # M4K: gpu-switcher.py'deki install_autostart() aynen taşındı; AUTOSTART_CMD config'den geliyor / install_autostart() migrated as-is; AUTOSTART_CMD now comes from config
     ensure_dir(AUTOSTART_DIR)
-    # M4K: .format() yerine % kullanıldı; nvidia-settings sözdizimindeki {} ile çakışmıyor
+    # M4K: .format() yerine % kullanıldı; nvidia-settings sözdizimindeki {} ile çakışmıyor / % used instead of .format(); avoids conflict with {} in nvidia-settings syntax
     cmdline = AUTOSTART_CMD % output_name
     desktop = (
         "[Desktop Entry]\n"
@@ -313,7 +313,7 @@ def install_autostart(output_name: str, logger: Logger) -> bool:
 
 def remove_autostart(logger: Logger) -> bool:
     """Autostart .desktop dosyasını siler."""
-    # M4K: gpu-switcher.py'deki remove_autostart() aynen taşındı
+    # M4K: gpu-switcher.py'deki remove_autostart() aynen taşındı / remove_autostart() migrated as-is from gpu-switcher.py
     try:
         if os.path.exists(AUTOSTART_DESKTOP):
             os.remove(AUTOSTART_DESKTOP)
@@ -328,5 +328,5 @@ def remove_autostart(logger: Logger) -> bool:
 
 def autostart_exists() -> bool:
     """Autostart dosyasının var olup olmadığını kontrol eder."""
-    # M4K: gpu-switcher.py'deki autostart_exists() aynen taşındı
+    # M4K: gpu-switcher.py'deki autostart_exists() aynen taşındı / autostart_exists() migrated as-is from gpu-switcher.py
     return os.path.exists(AUTOSTART_DESKTOP)

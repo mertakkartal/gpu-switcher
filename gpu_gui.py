@@ -8,7 +8,7 @@ Gereksinimler:
   sudo apt install gir1.2-gtk-4.0 gir1.2-adw-1 python3-gi
 """
 
-# M4K: gpu_gui.py GTK3'ten GTK4 + libadwaita'ya tamamen yeniden yazıldı
+# M4K: gpu_gui.py GTK3'ten GTK4 + libadwaita'ya tamamen yeniden yazıldı / gpu_gui.py fully rewritten from GTK3 to GTK4 + libadwaita
 import sys
 from typing import Optional
 
@@ -24,7 +24,7 @@ from gpu_controller import ApplySettings, GpuController, GpuProfile
 
 _cfg = load_config()
 
-# M4K: uygulama sabitleri config'den okunuyor
+# M4K: uygulama sabitleri config'den okunuyor / application constants read from config
 APP_ID: str = _cfg.get("app_id", "com.m4k.gpu_switcher")
 _WIN_W: int = _cfg.get("window_width", 700)
 _WIN_H: int = _cfg.get("window_height", 820)
@@ -42,7 +42,7 @@ class GpuSwitcherWindow(Adw.ApplicationWindow):
 
     def __init__(self, app: Adw.Application, controller: GpuController):
         super().__init__(application=app)
-        # M4K: controller referansı tutuldu; window doğrudan core'a erişmiyor
+        # M4K: controller referansı tutuldu; window doğrudan core'a erişmiyor / controller reference stored; window does not access core directly
         self._ctrl = controller
         self._applying = False
         self._min_log_level = 1  # INFO
@@ -61,11 +61,11 @@ class GpuSwitcherWindow(Adw.ApplicationWindow):
     # -----------------------------------------------------------------------
 
     def _build_ui(self) -> None:
-        # M4K: Adw.ToastOverlay ile bildirim sistemi eklendi
+        # M4K: Adw.ToastOverlay ile bildirim sistemi eklendi / notification system added via Adw.ToastOverlay
         self._toast_overlay = Adw.ToastOverlay()
         self.set_content(self._toast_overlay)
 
-        # M4K: Adw.ToolbarView ile header + içerik ayrımı sağlandı
+        # M4K: Adw.ToolbarView ile header + içerik ayrımı sağlandı / header and content separation achieved via Adw.ToolbarView
         toolbar_view = Adw.ToolbarView()
         self._toast_overlay.set_child(toolbar_view)
 
@@ -78,7 +78,7 @@ class GpuSwitcherWindow(Adw.ApplicationWindow):
         scroll.set_vexpand(True)
         toolbar_view.set_content(scroll)
 
-        # M4K: Adw.Clamp ile max genişlik kısıtlandı; enterprise tek sütun layout
+        # M4K: Adw.Clamp ile max genişlik kısıtlandı; enterprise tek sütun layout / max width constrained via Adw.Clamp; single-column enterprise layout
         clamp = Adw.Clamp()
         clamp.set_maximum_size(760)
         clamp.set_margin_top(20)
@@ -100,7 +100,7 @@ class GpuSwitcherWindow(Adw.ApplicationWindow):
         header = Adw.HeaderBar()
         toolbar_view.add_top_bar(header)
 
-        # M4K: profil seçici dropdown header'a eklendi; enterprise UX için
+        # M4K: profil seçici dropdown header'a eklendi; enterprise UX için / profile selector dropdown added to header for enterprise UX
         self._profile_string_list = Gtk.StringList.new(["— Select Profile —"])
         self._profile_dropdown = Gtk.DropDown(model=self._profile_string_list)
         self._profile_dropdown.set_tooltip_text("Load a saved profile")
@@ -113,7 +113,7 @@ class GpuSwitcherWindow(Adw.ApplicationWindow):
         save_btn.connect("clicked", self._on_save_profile_clicked)
         header.pack_start(save_btn)
 
-        # M4K: Gtk.Spinner apply sırasında header'da döner; async işlem görselleştirildi
+        # M4K: Gtk.Spinner apply sırasında header'da döner; async işlem görselleştirildi / Gtk.Spinner spins in the header during apply; async operation is visually indicated
         self._spinner = Gtk.Spinner()
         header.pack_end(self._spinner)
 
@@ -123,7 +123,7 @@ class GpuSwitcherWindow(Adw.ApplicationWindow):
         header.pack_end(self._apply_btn)
 
     def _build_system_group(self, parent: Gtk.Box) -> None:
-        # M4K: Adw.PreferencesGroup ile bölüm başlıkları ve açıklamaları eklendi
+        # M4K: Adw.PreferencesGroup ile bölüm başlıkları ve açıklamaları eklendi / section titles and descriptions added via Adw.PreferencesGroup
         group = Adw.PreferencesGroup()
         group.set_title("System & Display")
         group.set_description("Current GPU configuration and display output")
@@ -146,7 +146,7 @@ class GpuSwitcherWindow(Adw.ApplicationWindow):
         prime_row.set_title("PRIME GPU Mode")
         prime_row.set_subtitle("Logout or reboot required after change")
 
-        # M4K: GTK4'te RadioButton kaldırıldı; CheckButton(group=) kullanıldı
+        # M4K: GTK4'te RadioButton kaldırıldı; CheckButton(group=) kullanıldı / RadioButton removed in GTK4; CheckButton(group=) used instead
         prime_box = Gtk.Box(spacing=12)
         prime_box.set_valign(Gtk.Align.CENTER)
         self._rb_intel = Gtk.CheckButton(label="intel")
@@ -166,7 +166,7 @@ class GpuSwitcherWindow(Adw.ApplicationWindow):
         group.set_description("Applied immediately to the current X session")
         parent.append(group)
 
-        # M4K: Adw.ActionRow + Gtk.Switch kullanıldı; Adw.SwitchRow libadwaita 1.4+ gerektirir
+        # M4K: Adw.ActionRow + Gtk.Switch kullanıldı; Adw.SwitchRow libadwaita 1.4+ gerektirir / Adw.ActionRow + Gtk.Switch used; Adw.SwitchRow requires libadwaita 1.4+
         self._sw_comp, _ = self._make_switch_row(
             group, "Force Composition Pipeline", "Eliminates screen tearing (ForceCompositionPipeline=On)"
         )
@@ -209,14 +209,14 @@ class GpuSwitcherWindow(Adw.ApplicationWindow):
         group.set_description(f"Live GPU metrics · refreshes every {_TELE_REFRESH}s")
         parent.append(group)
 
-        # M4K: her telemetri değeri ayrı Adw.ActionRow'da gösteriliyor; okunabilirlik arttı
+        # M4K: her telemetri değeri ayrı Adw.ActionRow'da gösteriliyor; okunabilirlik arttı / each telemetry value shown in its own Adw.ActionRow; readability improved
         self._lbl_temp = self._make_telemetry_row(group, "Temperature", "temp-symbolic")
         self._lbl_clk = self._make_telemetry_row(group, "Core Clock", "utilities-system-monitor-symbolic")
         self._lbl_fan = self._make_telemetry_row(group, "Fan Speed", "weather-windy-symbolic")
         self._lbl_pwr = self._make_telemetry_row(group, "Power Draw", "battery-symbolic")
 
     def _build_profiles_group(self, parent: Gtk.Box) -> None:
-        # M4K: profiller dinamik Adw.PreferencesGroup satırları olarak listeleniyor
+        # M4K: profiller dinamik Adw.PreferencesGroup satırları olarak listeleniyor / profiles listed as dynamic Adw.PreferencesGroup rows
         self._profiles_group = Adw.PreferencesGroup()
         self._profiles_group.set_title("Profiles")
         self._profiles_group.set_description("Saved GPU setting presets")
@@ -237,7 +237,7 @@ class GpuSwitcherWindow(Adw.ApplicationWindow):
         # Log seviye seçici
         level_box = Gtk.Box(spacing=8)
         level_box.append(Gtk.Label(label="Log level:"))
-        # M4K: GTK4'te ComboBoxText kaldırıldı; Gtk.DropDown + Gtk.StringList kullanıldı
+        # M4K: GTK4'te ComboBoxText kaldırıldı; Gtk.DropDown + Gtk.StringList kullanıldı / ComboBoxText removed in GTK4; Gtk.DropDown + Gtk.StringList used instead
         level_model = Gtk.StringList.new(_LOG_LEVELS)
         self._log_dropdown = Gtk.DropDown(model=level_model)
         self._log_dropdown.set_selected(1)  # INFO
@@ -265,7 +265,7 @@ class GpuSwitcherWindow(Adw.ApplicationWindow):
 
     def _make_switch_row(self, group: Adw.PreferencesGroup, title: str, subtitle: str):
         """Adw.ActionRow + Gtk.Switch çifti oluşturur."""
-        # M4K: Switch row factory; Adw.SwitchRow yerine kullanıldı (uyumluluk)
+        # M4K: Switch row factory; Adw.SwitchRow yerine kullanıldı (uyumluluk) / switch row factory; used instead of Adw.SwitchRow for compatibility
         row = Adw.ActionRow()
         row.set_title(title)
         row.set_subtitle(subtitle)
@@ -293,7 +293,7 @@ class GpuSwitcherWindow(Adw.ApplicationWindow):
 
     def _refresh_profiles_list(self) -> None:
         """Profil listesini ve dropdown'ı yeniden çizer."""
-        # M4K: mevcut satırlar temizlenip yeniden oluşturuluyor; dinamik profil listesi
+        # M4K: mevcut satırlar temizlenip yeniden oluşturuluyor; dinamik profil listesi / existing rows cleared and rebuilt; dynamic profile list
         for row in self._profile_rows:
             self._profiles_group.remove(row)
         self._profile_rows = []
@@ -339,7 +339,7 @@ class GpuSwitcherWindow(Adw.ApplicationWindow):
 
     def _load_profile(self, profile: GpuProfile) -> None:
         """Profil ayarlarını widget'lara yansıtır."""
-        # M4K: profil yüklenince tüm widget state'leri güncelleniyor
+        # M4K: profil yüklenince tüm widget state'leri güncelleniyor / all widget states updated when a profile is loaded
         self._set_prime_radio(profile.prime_mode)
         self._sw_comp.set_active(profile.comp_pipeline)
         self._sw_fullrgb.set_active(profile.full_rgb)
@@ -369,7 +369,7 @@ class GpuSwitcherWindow(Adw.ApplicationWindow):
 
     def _on_save_profile_clicked(self, _btn) -> None:
         """Mevcut ayarları profil olarak kaydetmek için dialog açar."""
-        # M4K: Adw.MessageDialog ile modal kayıt dialog'u oluşturuldu
+        # M4K: Adw.MessageDialog ile modal kayıt dialog'u oluşturuldu / modal save dialog created via Adw.MessageDialog
         dialog = Adw.MessageDialog(
             transient_for=self,
             heading="Save Profile",
@@ -430,7 +430,7 @@ class GpuSwitcherWindow(Adw.ApplicationWindow):
 
         self._set_applying(True)
 
-        # M4K: log callback GLib.idle_add içine sarıldı; GUI thread'i dışından çağrı güvenli
+        # M4K: log callback GLib.idle_add içine sarıldı; GUI thread'i dışından çağrı güvenli / log callback wrapped in GLib.idle_add; safe to call from outside the GUI thread
         def _on_log(level: str, msg: str):
             GLib.idle_add(lambda: self._log(level, msg))
 
@@ -467,7 +467,7 @@ class GpuSwitcherWindow(Adw.ApplicationWindow):
 
     def _set_applying(self, applying: bool) -> None:
         """Apply butonunu ve spinner'ı async durumuyla senkronize eder."""
-        # M4K: apply sırasında buton devre dışı bırakılıyor; çift tıklama önleniyor
+        # M4K: apply sırasında buton devre dışı bırakılıyor; çift tıklama önleniyor / button disabled during apply; prevents double-click
         self._applying = applying
         self._apply_btn.set_sensitive(not applying)
         if applying:
@@ -502,7 +502,7 @@ class GpuSwitcherWindow(Adw.ApplicationWindow):
     def _start_telemetry(self) -> None:
         import gpu_core as core
         if core.have("nvidia-smi"):
-            # M4K: telemetri timer arka planda çalışıyor; GUI thread'ini bloklamıyor
+            # M4K: telemetri timer arka planda çalışıyor; GUI thread'ini bloklamıyor / telemetry timer runs in the background; does not block the GUI thread
             self._telemetry_timer_id = GLib.timeout_add_seconds(
                 _TELE_REFRESH, self._on_telemetry_tick
             )
@@ -534,7 +534,7 @@ class GpuSwitcherWindow(Adw.ApplicationWindow):
         return True  # timer'ı sürdür
 
     def do_close_request(self) -> bool:
-        # M4K: pencere kapanırken telemetri timer temizleniyor; kaynak sızıntısı önlendi
+        # M4K: pencere kapanırken telemetri timer temizleniyor; kaynak sızıntısı önlendi / telemetry timer cleaned up on window close; resource leak prevented
         if self._telemetry_timer_id is not None:
             GLib.source_remove(self._telemetry_timer_id)
             self._telemetry_timer_id = None
@@ -549,7 +549,7 @@ class GpuSwitcherApp(Adw.Application):
     """GTK4 + libadwaita uygulama nesnesi."""
 
     def __init__(self):
-        # M4K: Gtk.Application yerine Adw.Application kullanıldı; tema otomatik takip edilir
+        # M4K: Gtk.Application yerine Adw.Application kullanıldı; tema otomatik takip edilir / Adw.Application used instead of Gtk.Application; theme follows system automatically
         super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.FLAGS_NONE)
         self._window: Optional[GpuSwitcherWindow] = None
 
