@@ -31,3 +31,6 @@ window_height: 820
 
 # M4K: Profil dosyası yolu; gpu_controller.py tarafından okunur
 profiles_path: "~/.config/gpu-switcher/profiles.yaml"
+
+# M4K: Sistem tepsisi ikonu etkin/devre dışı; pystray + Pillow gerektirir / system tray icon enabled/disabled; requires pystray + Pillow
+tray_enabled: true
