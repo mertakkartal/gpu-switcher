@@ -1,0 +1,11 @@
+# GPU Switcher — Python dependencies
+# System GTK/Adwaita bindings must be installed via apt (see README):
+#   sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1
+
+# Optional: YAML config + profile support
+PyYAML>=6.0
+
+# Optional: system tray icon support (set tray_enabled: true in config.yaml)
+# M4K: pystray ve Pillow opsiyonel; eksikse tray devre dışı / pystray and Pillow are optional; tray disabled if missing
+pystray>=0.19.0
+Pillow>=9.0.0

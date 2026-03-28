@@ -10,6 +10,7 @@ Gereksinimler:
 
 # M4K: gpu_gui.py GTK3'ten GTK4 + libadwaita'ya tamamen yeniden yazıldı / gpu_gui.py fully rewritten from GTK3 to GTK4 + libadwaita
 import sys
+import threading
 from typing import Optional
 
 import gi
@@ -31,6 +32,8 @@ _WIN_H: int = _cfg.get("window_height", 820)
 _TELE_REFRESH: int = _cfg.get("telemetry_refresh_seconds", 2)
 
 _LOG_LEVELS = ["DEBUG", "INFO", "WARN", "ERROR"]
+# M4K: tray_enabled config'den okunuyor; False ise tepsi ikonu devre dışı / tray_enabled read from config; if False, tray icon is disabled
+_TRAY_ENABLED: bool = _cfg.get("tray_enabled", True)
 
 
 # ---------------------------------------------------------------------------
@@ -52,9 +55,14 @@ class GpuSwitcherWindow(Adw.ApplicationWindow):
         self.set_title("GPU Switcher")
         self.set_default_size(_WIN_W, _WIN_H)
 
+        # M4K: _tray başlangıçta None; _setup_tray() pystray varsa atar / _tray is None initially; _setup_tray() assigns it if pystray is available
+        self._tray = None
+
         self._build_ui()
         self._refresh_profiles_list()
         self._start_telemetry()
+        if _TRAY_ENABLED:
+            self._setup_tray()
 
     # -----------------------------------------------------------------------
     # UI kurulumu
@@ -533,8 +541,46 @@ class GpuSwitcherWindow(Adw.ApplicationWindow):
 
         return True  # timer'ı sürdür
 
+    def _setup_tray(self) -> None:
+        """pystray ile sistem tepsisi ikonu oluşturur (opsiyonel) / creates system tray icon via pystray (optional)."""
+        # M4K: pystray + Pillow opsiyonel; eksikse sessizce atlanıyor / pystray + Pillow are optional; silently skipped if missing
+        try:
+            import pystray
+            from PIL import Image, ImageDraw
+
+            # M4K: basit yeşil daire ikonu oluşturuluyor; harici dosya gerekmez / simple green circle icon created; no external file needed
+            img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(img)
+            draw.ellipse((4, 4, 60, 60), fill=(74, 194, 80, 255))
+
+            menu = pystray.Menu(
+                pystray.MenuItem(
+                    "Show GPU Switcher",
+                    lambda _icon, _item: GLib.idle_add(self.present),
+                    default=True,
+                ),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem(
+                    "Quit",
+                    lambda _icon, _item: GLib.idle_add(self.get_application().quit),
+                ),
+            )
+            # M4K: pystray.Icon kendi thread'inde çalışıyor; GTK main loop'u bloklamıyor / pystray.Icon runs in its own thread; does not block GTK main loop
+            self._tray = pystray.Icon("gpu-switcher", img, "GPU Switcher", menu)
+            threading.Thread(target=self._tray.run, daemon=True).start()
+            self._log("INFO", "Tray icon active (pystray). / Tepsi ikonu etkin (pystray).")
+        except ImportError:
+            self._tray = None
+        except Exception as e:
+            self._tray = None
+            self._log("WARN", f"Tray icon unavailable: {e}")
+
     def do_close_request(self) -> bool:
-        # M4K: pencere kapanırken telemetri timer temizleniyor; kaynak sızıntısı önlendi / telemetry timer cleaned up on window close; resource leak prevented
+        # M4K: tepsi ikonu aktifse pencere kapatılmıyor, sadece gizleniyor; arka planda çalışmaya devam eder / if tray is active, window is hidden instead of closed; continues running in background
+        if self._tray is not None:
+            self.hide()
+            return True  # True = GTK'ya "kapat isteğini reddet" / True = tell GTK to reject the close request
+        # M4K: tepsi yok → kapanırken telemetri timer temizleniyor / no tray → clean up telemetry timer on close
         if self._telemetry_timer_id is not None:
             GLib.source_remove(self._telemetry_timer_id)
             self._telemetry_timer_id = None
@@ -558,6 +604,18 @@ class GpuSwitcherApp(Adw.Application):
             controller = GpuController()
             self._window = GpuSwitcherWindow(self, controller)
         self._window.present()
+
+    def do_shutdown(self) -> None:
+        # M4K: uygulama kapanırken tray ikonu durduruluyor; pystray thread temizleniyor / tray icon stopped on app shutdown; pystray thread cleaned up
+        if self._window and self._window._tray is not None:
+            try:
+                self._window._tray.stop()
+            except Exception:
+                pass
+        if self._window and self._window._telemetry_timer_id is not None:
+            GLib.source_remove(self._window._telemetry_timer_id)
+            self._window._telemetry_timer_id = None
+        super().do_shutdown()
 
 
 def main() -> None:
