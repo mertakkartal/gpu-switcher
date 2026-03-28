@@ -1,37 +1,33 @@
 # GPU Switcher
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
-![Python 3.12+](https://img.shields.io/badge/Python-3.12+-yellow.svg)
+![Python 3.10+](https://img.shields.io/badge/Python-3.10+-yellow.svg)
+![GTK](https://img.shields.io/badge/GTK-4.0%20%2B%20libadwaita-green.svg)
 ![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04-orange.svg)
 
-> GUI + Bash tool to fix 4K@60 micro-stutter on NVIDIA, auto-detect displays, manage color, clocks, and autostart.
+> GTK4 + libadwaita tabanlı enterprise GPU yönetim aracı. NVIDIA/Intel PRIME geçişi, ekran ince ayarları, profil sistemi ve canlı telemetri.
 
-A lightweight **GUI + shell helper** to switch between **NVIDIA / Intel (PRIME)** modes, apply stutter-free composition
-pipelines, manage color range, and persist settings across sessions.  
-Designed for **Ubuntu 24.04 (Xorg)** — should work on most hybrid laptops (e.g., MSI GE75 Raider 9SE, RTX 2060 + UHD
-630 ) with automatic output detection.
+A **GTK4 + libadwaita** desktop application to switch between **NVIDIA / Intel (PRIME)** modes, apply stutter-free composition pipelines, manage color range, and persist settings across sessions.
+Designed for **Ubuntu 24.04 (Xorg)** — works on hybrid laptops (e.g., MSI GE75 Raider 9SE, RTX 2060 + UHD 630) with automatic output detection.
 
-> 🧠 **TL;DR:** Fix micro-stutter on 4K@60 via `Force(Full)CompositionPipeline`, apply full-range RGB, persist at login,
-> and monitor GPU telemetry live.
+> **TL;DR:** Fix micro-stutter on 4K@60 via `Force(Full)CompositionPipeline`, apply full-range RGB, save/load GPU profiles, persist at login, and monitor GPU telemetry live.
 
 ---
 
 ## ✨ Features
 
-- **One-click Apply** for:
-    - `ForceCompositionPipeline=On` and `ForceFullCompositionPipeline=On`
-    - Full-range RGB color space
+- **One-click Async Apply** — apply sırasında UI donmaz; header'da spinner gösterir
+- **GPU Mode Switching** — `prime-select` ile intel / on-demand / nvidia geçişi
+- **Display Tweaks:**
+    - `ForceCompositionPipeline=On` + `ForceFullCompositionPipeline=On`
+    - Full-range RGB color space (ColorSpace=RGB, ColorRange=Full)
     - Optional persistence mode and fixed GPU clocks (safe min/max)
-- **Auto-detects** active display output:
-    - Prefers HDMI/DP/USB-C → else eDP → else first connected
-- **Live telemetry (NVIDIA-only):**
-    - temperature, clock, fan, power via `nvidia-smi`
-- **Autostart** toggle:
-    - creates `.desktop` launcher under `~/.config/autostart/`
-- **Integrated log panel:**
-    - every executed command and result shown in real time
-- **CLI support:**
-    - identical backend as GUI — useful for scripting or automation
+- **Profile System** — GPU ayar setlerini isimle kaydet, yükle ve sil (`~/.config/gpu-switcher/profiles.yaml`)
+- **Auto-detects** active display output — HDMI/DP öncelikli, xrandr tabanlı
+- **Live Telemetry** — sıcaklık, saat hızı, fan, güç (nvidia-smi, 2s yenileme)
+- **Autostart** toggle — `.desktop` entry yazar/siler (`~/.config/autostart/`)
+- **Toast Notifications** — Adw.Toast ile anlık durum bildirimleri
+- **Configurable** — `config.yaml` ile timeout, çözünürlük, pencere boyutu
 
 ---
 
@@ -40,17 +36,30 @@ Designed for **Ubuntu 24.04 (Xorg)** — should work on most hybrid laptops (e.g
 - **Ubuntu 24.04+** (Xorg session; *Wayland not supported yet*)
 - **NVIDIA proprietary driver (550.x or newer)**
 - **Intel iGPU (optional)** for PRIME mode switching
-- **Tools / Dependencies**
-  ```bash
-  sudo apt update
-  sudo apt install -y     python3-gi gir1.2-gtk-3.0 gir1.2-glib-2.0 gir1.2-notify-0.7     gir1.2-appindicator3-0.1 x11-xserver-utils edid-decode     nvidia-driver-550 nvidia-settings nvidia-utils-550 bash awk sed
-  ```
 
-> ✅ Make sure you’re using an **Xorg** session:
+### Sistem paketleri
+
+```bash
+sudo apt update
+sudo apt install -y \
+  python3-gi \
+  gir1.2-gtk-4.0 \
+  gir1.2-adw-1 \
+  x11-xserver-utils \
+  nvidia-settings \
+  ubuntu-drivers-common
+```
+
+### Python bağımlılıkları
+
+```bash
+pip install pyyaml
+```
+
+> Make sure you’re using an **Xorg** session:
 > ```bash
-> echo $XDG_SESSION_TYPE
+> echo $XDG_SESSION_TYPE   # should print: x11
 > ```
-> Should print: `x11`
 
 ---
 
@@ -237,6 +246,59 @@ Use `--verbose` or `--dry-run` flags for detailed output.
 
 ---
 
+## 🏗️ Architecture
+
+```
+gpu-switcher.py       → Entry point
+gpu_gui.py            → GTK4 + libadwaita view layer
+gpu_controller.py     → MVC controller (async apply, profile management)
+gpu_core.py           → Business logic (subprocess, detection, apply ops)
+gpu_config.py         → YAML config loader (graceful fallback)
+config.yaml           → User configuration
+~/.config/gpu-switcher/profiles.yaml  → Saved profiles
+```
+
+**Layer dependencies:**
+```
+gpu_gui.py  →  gpu_controller.py  →  gpu_core.py
+                                  →  gpu_config.py
+```
+
+---
+
+## ⚙️ Configuration
+
+Edit `config.yaml` to customize behavior:
+
+```yaml
+fallback_resolution: "3840x2160_60"   # ForceCompositionPipeline fallback res
+default_cmd_timeout: 10               # General command timeout (seconds)
+telemetry_cmd_timeout: 3              # nvidia-smi timeout (seconds)
+telemetry_refresh_seconds: 2          # Live telemetry refresh interval
+window_width: 700
+window_height: 820
+profiles_path: "~/.config/gpu-switcher/profiles.yaml"
+```
+
+All values are optional — defaults are used if the file is missing or a key is omitted.
+
+---
+
+## 🧪 Tests
+
+```bash
+pip install pytest
+pytest tests/ -v
+```
+
+```
+34 passed in 1.1s
+```
+
+Coverage: pure functions, subprocess mocking, autostart filesystem, controller profile CRUD, async apply.
+
+---
+
 ## 🧰 Helper Scripts
 
 | Script         | Description                                                            |
@@ -318,7 +380,7 @@ This tool automates all those manual `nvidia-settings` tweaks, persists them, an
 ## 🧱 Credits
 
 - NVIDIA Linux team (for `nvidia-settings`, `nvidia-smi`)
-- GNOME/GTK3 for GUI bindings
+- GNOME/GTK4 + libadwaita team for modern UI toolkit
 - Community testers with hybrid GPUs
 
 ---
@@ -328,7 +390,8 @@ This tool automates all those manual `nvidia-settings` tweaks, persists them, an
 - [ ] Wayland support
 - [ ] VRR / G-Sync integration
 - [ ] CLI daemon for telemetry overlay
-- [ ] Configurable per-display profiles
+- [ ] Tray icon (AppIndicator3 / XApp.StatusIcon)
+- [ ] Profile auto-apply on login
 - [ ] Flatpak package distribution
 
 ---

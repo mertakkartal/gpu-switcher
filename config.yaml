@@ -1,0 +1,33 @@
+# GPU Switcher — Yapılandırma dosyası
+# Tüm değerler isteğe bağlıdır; silinirse uygulama varsayılanlarla çalışır.
+
+# M4K: Uygulama kimliği; GTK application_id olarak kullanılır
+app_id: "com.m4k.gpu_switcher"
+
+# M4K: Log prefix etiketi
+app_tag: "[gpu-switcher]"
+
+# M4K: Autostart .desktop dosyasının yazılacağı dizin
+autostart_dir: "~/.config/autostart"
+
+# M4K: Autostart komut şablonu; %s yerine algılanan ekran çıkışı gelir (% formatting kullanılıyor)
+autostart_cmd: 'nvidia-settings --assign CurrentMetaMode="%s: 3840x2160_60 +0+0 {ForceCompositionPipeline=On, ForceFullCompositionPipeline=On}"'
+
+# M4K: ForceCompositionPipeline fallback çözünürlüğü
+fallback_resolution: "3840x2160_60"
+
+# M4K: Genel komut timeout süresi (saniye)
+default_cmd_timeout: 10
+
+# M4K: Telemetri komut timeout süresi (saniye)
+telemetry_cmd_timeout: 3
+
+# M4K: Telemetri yenileme aralığı (saniye)
+telemetry_refresh_seconds: 2
+
+# M4K: Varsayılan pencere boyutu (GTK4 için güncellendi)
+window_width: 700
+window_height: 820
+
+# M4K: Profil dosyası yolu; gpu_controller.py tarafından okunur
+profiles_path: "~/.config/gpu-switcher/profiles.yaml"
