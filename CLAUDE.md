@@ -1,196 +1,119 @@
-# CLAUDE.md — GPU Switcher
+# TCHN Workflow Protocol
 
-> AI assistant guide for understanding, navigating, and modifying this repository.
+## Overview
 
----
-
-## Project Overview
-
-**GPU Switcher** is a lightweight Ubuntu/Xorg tool that lets users:
-
-- Switch between NVIDIA, Intel, and on-demand PRIME modes via `prime-select`
-- Apply `ForceCompositionPipeline` and `ForceFullCompositionPipeline` NVIDIA display tweaks
-- Set full-range RGB color output
-- Enable NVIDIA persistence mode and lock GPU clocks
-- Manage an XDG autostart `.desktop` entry for applying settings at login
-- Monitor live GPU telemetry (temperature, clock, fan, power) via `nvidia-smi`
-
-It has two interfaces that share the same underlying logic:
-- A **GTK3 GUI** (`gpu-switcher.py`)
-- A **headless CLI** (`gpu-switch-apply.sh`)
-
-**Target platform:** Ubuntu 24.04, Xorg (X11) sessions only. Wayland is not supported.
+TCHN is a mandatory pre-execution alignment workflow. **Never write code or make changes before completing the TCHN alignment phase.**
 
 ---
 
-## Repository Structure
+## Trigger
+
+User prefixes a message with `TCHN`:
 
 ```
-gpu-switcher/
-├── gpu-switcher.py          # Main GTK3 GUI application (Python 3.12+)
-├── gpu-switch-apply.sh      # Headless bash CLI for all GPU operations
-├── setup.sh                 # Dependency installer + optional autostart setup
-├── uninstall.sh             # Removes autostart entries, optionally resets GPU state
-├── docs/
-│   └── gui.png              # GUI screenshot
-├── .gitignore
-├── LICENSE                  # MIT
-└── README.md
+TCHN <task description>
 ```
 
----
+Preset shortcuts (auto-select tier, skip known parameters):
 
-## Key Files
-
-### `gpu-switcher.py`
-
-The primary entry point. A single-file GTK3 application (`Gtk.Application`, app ID `com.m4k.gpu_switcher`).
-
-**Structure:**
-- **Helper functions** (top of file): `which()`, `run_cmd()`, `have()`, `ensure_dir()`
-- **Detection functions**: `detect_display_output()`, `detect_prime_mode()`
-- **Telemetry**: `fetch_nvidia_telemetry()` returns a `Telemetry` dataclass parsed from `nvidia-smi --query-gpu`
-- **Apply operations**: `apply_force_comp_pipeline()`, `apply_full_rgb()`, `set_persistence_mode()`, `set_locked_clocks()`, `apply_prime()`
-- **Autostart management**: `install_autostart()`, `remove_autostart()`, `autostart_exists()`
-- **UI**: `LogBuffer` class wraps a `Gtk.TextView` for thread-safe log appending; `GPUSwitcherApp` is the `Gtk.Application` subclass
-- **Entry point**: `main()` at the bottom
-
-All subprocess calls go through `run_cmd(cmd, timeout)` which uses `shlex.split()` for safe argument parsing. Never construct commands via string concatenation.
-
-### `gpu-switch-apply.sh`
-
-Bash CLI mirror of the Python apply functions. Accepts flags:
-
-| Flag | Default | Description |
+| Shortcut | Tier | Preloaded context |
 |---|---|---|
-| `--apply` | off | Apply `nvidia-settings` MetaMode + color |
-| `--persist` | off | Enable `nvidia-smi -pm 1` and optional clock lock |
-| `--autostart on\|off` | off | Write or remove `~/.config/autostart/nvidia-comp-pipeline.desktop` |
-| `--output NAME` | auto | Override display output name (else auto-detected) |
-| `--mode WxH_Hz` | `3840x2160_60` | Resolution/refresh for MetaMode string |
-| `--clk-min N` | - | Minimum locked clock MHz |
-| `--clk-max N` | - | Maximum locked clock MHz |
-| `--force On\|Off` | `On` | `ForceCompositionPipeline` value |
-| `--fforce On\|Off` | `On` | `ForceFullCompositionPipeline` value |
-| `--colorspace 0\|1` | `0` | 0=RGB, 1=YCbCr444 |
-| `--colorrange 0\|1` | `0` | 0=Full, 1=Limited |
-
-Uses `set -Eeuo pipefail`. Auto-detects display via `xrandr --query` with preference for external outputs (HDMI/DP/DVI).
-
-### `setup.sh`
-
-One-time setup script. Runs `apt install` for GTK3/Python bindings and NVIDIA tools, then optionally writes an XDG autostart entry calling `gpu-switch-apply.sh`.
-
-### `uninstall.sh`
-
-Reverses `setup.sh`. Removes autostart entries. Optional `--gpu-reset` flag disables persistence and resets locked clocks.
+| `TCHN test <X>` | LIGHT | JUnit 5 + Mockito conventions |
+| `TCHN refactor <X>` | STANDARD | P0/P1/P2 phases + breaking change check |
+| `TCHN doc <X>` | DEEP | Format + audience preloaded |
 
 ---
 
-## Architecture & Conventions
+## Step 0 — Triage (always first)
 
-### Python Style
-- Python 3.12+, no external pip dependencies (only system GTK bindings via `gi`)
-- `from gi.repository import Gtk, GLib, Gio` — uses GLib main loop
-- UI updates from background callbacks must go through `GLib.idle_add()` (see `LogBuffer.log()`)
-- `@dataclass` used for `Telemetry`; prefer dataclasses for new data structures
-- No type aliases needed; use `Optional[T]` from `typing` for nullable values
-- `run_cmd()` is the single authoritative subprocess wrapper — always use it, never call `subprocess` directly
+Read the task description. Then output:
 
-### Shell Style
-- All shell scripts use `set -Eeuo pipefail`
-- `have()` guards every external tool check before invoking it
-- `log()` prefix is `[gpu-switcher]` for the main script, `[gpu-switcher:setup]` for setup
-- `mapfile` used for arrays from command substitution (bash 4+ required)
+1. **Recommended tier** (LIGHT / STANDARD / DEEP)
+2. **Recommended model** with one-line justification
+3. **Estimated tokens + turns**
+4. **Similar past work reference** (if applicable)
 
-### Autostart File Paths
-- Autostart desktop file: `~/.config/autostart/nvidia-comp-pipeline.desktop` (apply script)
-- Setup script autostart: `~/.config/autostart/gpu-switcher-autostart.desktop`
-
-### Privilege Model
-- `prime-select` is called via `pkexec` first (graphical auth dialog), falling back to `sudo`
-- `nvidia-smi -pm` (persistence) and `nvidia-smi -lgc` (clock lock) require `sudo`
-- All other operations (nvidia-settings, xrandr) run as the current user under Xorg
+> Model switching is the user's initiative. Claude only recommends.
+> If current model is Opus for a LIGHT task, warn: "Sonnet yeter."
 
 ---
 
-## Development Workflows
+## Tiers
 
-### Running the GUI
-```bash
-python3 gpu-switcher.py
-```
-Requires an active Xorg session with `$DISPLAY` set.
+### LIGHT
+**Default model:** Haiku or Sonnet
+**When:** Single file, clear task, low risk, no architectural decisions
 
-### Running the CLI
-```bash
-./gpu-switch-apply.sh --apply
-./gpu-switch-apply.sh --apply --persist --autostart on --mode 3840x2160_60
-sudo ./gpu-switch-apply.sh --persist --clk-min 1200 --clk-max 1500
-```
+**Steps:**
+1. Ask task + target file in a single question
+2. Propose a plan (max 3 steps)
+3. Wait for user approval (`OK` or similar)
+4. Execute
 
-### Installing Dependencies
-```bash
-chmod +x setup.sh
-./setup.sh
-```
+---
 
-### Uninstalling
-```bash
-chmod +x uninstall.sh
-./uninstall.sh --gpu-reset
+### STANDARD
+**Default model:** Sonnet
+**When:** Multi-class refactor, moderate complexity, no architectural decisions
+
+**Steps:**
+1. Confirm task + success criteria
+2. Ask for context files + project rules
+3. Present top 3 constraints and a max 5-step plan
+4. Wait for user approval
+5. Execute
+
+> If an architectural decision is encountered mid-task, pause and recommend upgrading to DEEP / Opus.
+
+---
+
+### DEEP
+**Default model:** Opus
+**When:** Multi-module changes, architectural decisions, high risk, cross-cutting concerns
+
+**Steps:**
+1. Confirm task + success criteria
+2. Collect context files
+3. Clarify project rules and constraints
+4. Present a success brief
+5. Identify risks and tradeoffs
+6. Present top 3 constraints + max 5-step plan
+7. Wait for user approval
+8. Execute
+
+> Never recommend a lower model for DEEP tasks.
+
+---
+
+## Code Convention
+
+Add a `// M4K:` comment in English above **every changed line**, explaining what was changed and why:
+
+```java
+// M4K: replaced equals() with equalsIgnoreCase() to fix case-sensitivity bug
+if (hostname.equalsIgnoreCase(configuredHost)) {
 ```
 
-### Linting / Testing
-There is no automated test suite or CI pipeline. Manual testing requires:
-- An Ubuntu 24.04+ system with Xorg session
-- NVIDIA proprietary drivers (550.x recommended)
-- `nvidia-settings`, `nvidia-smi`, `xrandr`, `prime-select` installed
-
-For Python syntax checking: `python3 -m py_compile gpu-switcher.py`
-For shell linting: `shellcheck gpu-switch-apply.sh setup.sh uninstall.sh`
+This applies to all languages (Java, Python, Bash, YAML, etc.).
 
 ---
 
-## Common Modification Patterns
+## Checkpoint (mandatory after every tier's output)
 
-### Adding a new CLI flag to `gpu-switch-apply.sh`
-1. Add a `--flag-name)` case in the `while [[ $# -gt 0 ]]` loop inside `main()`
-2. Declare the variable with a default before the loop
-3. Call the relevant function after argument parsing
+After execution, always run the checkpoint:
 
-### Adding a new operation to the Python GUI
-1. Write the logic as a standalone function following the `apply_*(logger)` pattern — accept a `logger` callable, return `bool`
-2. Add any needed widget to `do_activate()` in `GPUSwitcherApp`
-3. Call the function in `on_apply_clicked()` with `self.logbuf.log` as the logger
-
-### Adding a new telemetry field
-1. Add the field to the `Telemetry` dataclass
-2. Add the `nvidia-smi` query column to the `--query-gpu` call in `fetch_nvidia_telemetry()`
-3. Parse the new column by index from `parts`
-4. Display it in `refresh_telemetry()` and add a label widget in `do_activate()`
+1. **Auto-check success criteria** — List each criterion; flag any that are unmet
+2. **Model self-assessment** — "Was the model choice appropriate? Was the task simpler or more complex than expected?"
+3. **Ask the user:** "Sonraki sefer için hatırlamamı istediğin bir şey var mı?"
 
 ---
 
-## External Tools & Dependencies
+## Rules
 
-| Tool | Package | Required for |
-|---|---|---|
-| `nvidia-settings` | `nvidia-settings` | MetaMode, color space/range |
-| `nvidia-smi` | `nvidia-utils-550` | Telemetry, persistence, clock lock |
-| `prime-select` | `ubuntu-drivers-common` | PRIME mode switching |
-| `xrandr` | `x11-xserver-utils` | Display output detection |
-| `pkexec` | `policykit-1` | Graphical privilege escalation |
-| `python3-gi` | `python3-gi` | GTK3 Python bindings |
-| `gir1.2-gtk-3.0` | `gir1.2-gtk-3.0` | GTK3 typelib |
-
----
-
-## Known Constraints & Gotchas
-
-- **Xorg only**: `nvidia-settings --assign CurrentMetaMode` has no effect under Wayland
-- **Display resolution hardcoded in autostart**: The autostart `.desktop` entry hardcodes `3840x2160_60`; it will silently fail on monitors with different native resolutions
-- **Fan telemetry**: Laptops often report `N/A` for fan speed via `nvidia-smi`; the code handles this explicitly
-- **Fallback MetaMode**: `apply_force_comp_pipeline()` tries a generic MetaMode first, then falls back to the hardcoded `3840x2160_60` variant
-- **PRIME switch needs reboot**: `prime-select` changes take effect only after logout/login or full reboot — the UI informs the user but cannot enforce it
-- **`GLib.idle_add` for UI updates**: Any log message or label update triggered from a timer or background context must use `GLib.idle_add()`; direct widget calls from non-main-thread contexts will crash GTK
+- Never produce code before the alignment phase is complete
+- Never skip the checkpoint
+- Never recommend a lower model tier than the task warrants
+- After execution, always rewrite the full original prompt and append the recommended model tier, so the user can copy it to a new chat with the correct model
+- Keep plans to a maximum of 5 steps
+- Do not ask redundant questions that preset shortcuts have already answered
+- Always wait for explicit user approval (`OK`, `devam`, `go`, etc.) before executing
