@@ -1,383 +1,567 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-gpu_gui.py — GTK GUI katmanı
-Tüm arayüz kodu burada; business logic için gpu_core'u çağırır.
+gpu_gui.py — GTK4 + libadwaita enterprise arayüz katmanı
+MVC View: sadece UI. Business logic için gpu_controller kullanır.
+
+Gereksinimler:
+  sudo apt install gir1.2-gtk-4.0 gir1.2-adw-1 python3-gi
 """
 
-# M4K: GUI kodu gpu-switcher.py'den ayrı bir modüle taşındı; sadece UI mantığı içerir
+# M4K: gpu_gui.py GTK3'ten GTK4 + libadwaita'ya tamamen yeniden yazıldı
 import sys
 from typing import Optional
 
 import gi
 
-gi.require_version("Gtk", "3.0")
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
 gi.require_version("Gio", "2.0")
-from gi.repository import Gtk, GLib, Gio
+from gi.repository import Adw, Gio, GLib, Gtk
 
-# M4K: tüm business logic gpu_core'dan import ediliyor
-import gpu_core as core
 from gpu_config import load_config
+from gpu_controller import ApplySettings, GpuController, GpuProfile
 
-# M4K: config değerleri modül yüklenirken okunuyor
 _cfg = load_config()
+
+# M4K: uygulama sabitleri config'den okunuyor
 APP_ID: str = _cfg.get("app_id", "com.m4k.gpu_switcher")
-_WIN_W: int = _cfg.get("window_width", 840)
-_WIN_H: int = _cfg.get("window_height", 560)
+_WIN_W: int = _cfg.get("window_width", 700)
+_WIN_H: int = _cfg.get("window_height", 820)
 _TELE_REFRESH: int = _cfg.get("telemetry_refresh_seconds", 2)
 
+_LOG_LEVELS = ["DEBUG", "INFO", "WARN", "ERROR"]
+
 
 # ---------------------------------------------------------------------------
-# LogBuffer
+# Ana pencere
 # ---------------------------------------------------------------------------
 
-class LogBuffer:
-    """GLib.idle_add üzerinden GTK TextBuffer'a güvenli log yazar."""
+class GpuSwitcherWindow(Adw.ApplicationWindow):
+    """Ana uygulama penceresi — GTK4 + libadwaita."""
 
-    # M4K: LogBuffer gpu-switcher.py'den aynen taşındı
-    def __init__(self, textview: Gtk.TextView):
-        self.textview = textview
-        self.buf: Gtk.TextBuffer = textview.get_buffer()
-        self.levels = ["DEBUG", "INFO", "WARN", "ERROR"]
-        self.min_level = 1  # varsayılan INFO
+    def __init__(self, app: Adw.Application, controller: GpuController):
+        super().__init__(application=app)
+        # M4K: controller referansı tutuldu; window doğrudan core'a erişmiyor
+        self._ctrl = controller
+        self._applying = False
+        self._min_log_level = 1  # INFO
+        self._telemetry_timer_id: Optional[int] = None
+        self._profile_rows: list = []
 
-    def set_level_by_name(self, name: str):
-        try:
-            self.min_level = self.levels.index(name)
-            self.log("INFO", f"Log level set to {name}")
-        except ValueError:
-            pass
+        self.set_title("GPU Switcher")
+        self.set_default_size(_WIN_W, _WIN_H)
 
-    def log(self, level: str, msg: str):
-        if self.levels.index(level) < self.min_level:
+        self._build_ui()
+        self._refresh_profiles_list()
+        self._start_telemetry()
+
+    # -----------------------------------------------------------------------
+    # UI kurulumu
+    # -----------------------------------------------------------------------
+
+    def _build_ui(self) -> None:
+        # M4K: Adw.ToastOverlay ile bildirim sistemi eklendi
+        self._toast_overlay = Adw.ToastOverlay()
+        self.set_content(self._toast_overlay)
+
+        # M4K: Adw.ToolbarView ile header + içerik ayrımı sağlandı
+        toolbar_view = Adw.ToolbarView()
+        self._toast_overlay.set_child(toolbar_view)
+
+        # --- Header Bar ---
+        self._build_header(toolbar_view)
+
+        # --- Scrollable içerik ---
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_vexpand(True)
+        toolbar_view.set_content(scroll)
+
+        # M4K: Adw.Clamp ile max genişlik kısıtlandı; enterprise tek sütun layout
+        clamp = Adw.Clamp()
+        clamp.set_maximum_size(760)
+        clamp.set_margin_top(20)
+        clamp.set_margin_bottom(20)
+        clamp.set_margin_start(12)
+        clamp.set_margin_end(12)
+        scroll.set_child(clamp)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=20)
+        clamp.set_child(box)
+
+        self._build_system_group(box)
+        self._build_tweaks_group(box)
+        self._build_telemetry_group(box)
+        self._build_profiles_group(box)
+        self._build_log_group(box)
+
+    def _build_header(self, toolbar_view: Adw.ToolbarView) -> None:
+        header = Adw.HeaderBar()
+        toolbar_view.add_top_bar(header)
+
+        # M4K: profil seçici dropdown header'a eklendi; enterprise UX için
+        self._profile_string_list = Gtk.StringList.new(["— Select Profile —"])
+        self._profile_dropdown = Gtk.DropDown(model=self._profile_string_list)
+        self._profile_dropdown.set_tooltip_text("Load a saved profile")
+        self._profile_dropdown.connect("notify::selected", self._on_profile_dropdown_changed)
+        header.pack_start(self._profile_dropdown)
+
+        save_btn = Gtk.Button(icon_name="document-save-symbolic")
+        save_btn.set_tooltip_text("Save current settings as profile")
+        save_btn.add_css_class("flat")
+        save_btn.connect("clicked", self._on_save_profile_clicked)
+        header.pack_start(save_btn)
+
+        # M4K: Gtk.Spinner apply sırasında header'da döner; async işlem görselleştirildi
+        self._spinner = Gtk.Spinner()
+        header.pack_end(self._spinner)
+
+        self._apply_btn = Gtk.Button(label="Apply")
+        self._apply_btn.add_css_class("suggested-action")
+        self._apply_btn.connect("clicked", self._on_apply_clicked)
+        header.pack_end(self._apply_btn)
+
+    def _build_system_group(self, parent: Gtk.Box) -> None:
+        # M4K: Adw.PreferencesGroup ile bölüm başlıkları ve açıklamaları eklendi
+        group = Adw.PreferencesGroup()
+        group.set_title("System & Display")
+        group.set_description("Current GPU configuration and display output")
+        parent.append(group)
+
+        # Ekran çıkış satırı
+        self._display_row = Adw.ActionRow()
+        self._display_row.set_title("Active Display Output")
+        self._display_row.set_subtitle(self._ctrl.output_name)
+        refresh_btn = Gtk.Button(icon_name="view-refresh-symbolic")
+        refresh_btn.set_valign(Gtk.Align.CENTER)
+        refresh_btn.add_css_class("flat")
+        refresh_btn.set_tooltip_text("Re-detect display and PRIME mode")
+        refresh_btn.connect("clicked", lambda _: self._refresh_system_info())
+        self._display_row.add_suffix(refresh_btn)
+        group.add(self._display_row)
+
+        # PRIME modu satırı
+        prime_row = Adw.ActionRow()
+        prime_row.set_title("PRIME GPU Mode")
+        prime_row.set_subtitle("Logout or reboot required after change")
+
+        # M4K: GTK4'te RadioButton kaldırıldı; CheckButton(group=) kullanıldı
+        prime_box = Gtk.Box(spacing=12)
+        prime_box.set_valign(Gtk.Align.CENTER)
+        self._rb_intel = Gtk.CheckButton(label="intel")
+        self._rb_ondemand = Gtk.CheckButton(label="on-demand", group=self._rb_intel)
+        self._rb_nvidia = Gtk.CheckButton(label="nvidia", group=self._rb_intel)
+        prime_box.append(self._rb_intel)
+        prime_box.append(self._rb_ondemand)
+        prime_box.append(self._rb_nvidia)
+        prime_row.add_suffix(prime_box)
+        group.add(prime_row)
+
+        self._set_prime_radio(self._ctrl.prime_mode)
+
+    def _build_tweaks_group(self, parent: Gtk.Box) -> None:
+        group = Adw.PreferencesGroup()
+        group.set_title("NVIDIA Display Tweaks")
+        group.set_description("Applied immediately to the current X session")
+        parent.append(group)
+
+        # M4K: Adw.ActionRow + Gtk.Switch kullanıldı; Adw.SwitchRow libadwaita 1.4+ gerektirir
+        self._sw_comp, _ = self._make_switch_row(
+            group, "Force Composition Pipeline", "Eliminates screen tearing (ForceCompositionPipeline=On)"
+        )
+        self._sw_fullrgb, _ = self._make_switch_row(
+            group, "Force RGB Full Range", "ColorSpace=RGB · ColorRange=Full"
+        )
+        self._sw_autostart, _ = self._make_switch_row(
+            group, "Autostart on Login", "Writes .desktop entry to ~/.config/autostart"
+        )
+        self._sw_persist, _ = self._make_switch_row(
+            group, "Persistence Mode", "Keeps NVIDIA driver loaded between sessions (sudo)"
+        )
+
+        import gpu_core as core
+        self._sw_autostart.set_active(core.autostart_exists())
+
+        # Kilitli saat satırı
+        clocks_row = Adw.ActionRow()
+        clocks_row.set_title("Locked Clocks (MHz)")
+        clocks_row.set_subtitle("Optional: pin GPU frequency range (sudo nvidia-smi -lgc)")
+        clocks_box = Gtk.Box(spacing=8)
+        clocks_box.set_valign(Gtk.Align.CENTER)
+        self._ent_min = Gtk.Entry()
+        self._ent_min.set_placeholder_text("min")
+        self._ent_min.set_max_width_chars(7)
+        sep = Gtk.Label(label="–")
+        sep.add_css_class("dim-label")
+        self._ent_max = Gtk.Entry()
+        self._ent_max.set_placeholder_text("max")
+        self._ent_max.set_max_width_chars(7)
+        clocks_box.append(self._ent_min)
+        clocks_box.append(sep)
+        clocks_box.append(self._ent_max)
+        clocks_row.add_suffix(clocks_box)
+        group.add(clocks_row)
+
+    def _build_telemetry_group(self, parent: Gtk.Box) -> None:
+        group = Adw.PreferencesGroup()
+        group.set_title("Telemetry")
+        group.set_description(f"Live GPU metrics · refreshes every {_TELE_REFRESH}s")
+        parent.append(group)
+
+        # M4K: her telemetri değeri ayrı Adw.ActionRow'da gösteriliyor; okunabilirlik arttı
+        self._lbl_temp = self._make_telemetry_row(group, "Temperature", "temp-symbolic")
+        self._lbl_clk = self._make_telemetry_row(group, "Core Clock", "utilities-system-monitor-symbolic")
+        self._lbl_fan = self._make_telemetry_row(group, "Fan Speed", "weather-windy-symbolic")
+        self._lbl_pwr = self._make_telemetry_row(group, "Power Draw", "battery-symbolic")
+
+    def _build_profiles_group(self, parent: Gtk.Box) -> None:
+        # M4K: profiller dinamik Adw.PreferencesGroup satırları olarak listeleniyor
+        self._profiles_group = Adw.PreferencesGroup()
+        self._profiles_group.set_title("Profiles")
+        self._profiles_group.set_description("Saved GPU setting presets")
+        parent.append(self._profiles_group)
+
+    def _build_log_group(self, parent: Gtk.Box) -> None:
+        log_group = Adw.PreferencesGroup()
+        log_group.set_title("Output Log")
+        parent.append(log_group)
+
+        log_row = Adw.ActionRow()
+        log_row.set_activatable(False)
+
+        log_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        log_box.set_margin_top(8)
+        log_box.set_margin_bottom(8)
+
+        # Log seviye seçici
+        level_box = Gtk.Box(spacing=8)
+        level_box.append(Gtk.Label(label="Log level:"))
+        # M4K: GTK4'te ComboBoxText kaldırıldı; Gtk.DropDown + Gtk.StringList kullanıldı
+        level_model = Gtk.StringList.new(_LOG_LEVELS)
+        self._log_dropdown = Gtk.DropDown(model=level_model)
+        self._log_dropdown.set_selected(1)  # INFO
+        self._log_dropdown.connect("notify::selected", self._on_log_level_changed)
+        level_box.append(self._log_dropdown)
+        log_box.append(level_box)
+
+        self._logview = Gtk.TextView()
+        self._logview.set_editable(False)
+        self._logview.set_monospace(True)
+        self._logview.set_size_request(-1, 150)
+        self._logbuf = self._logview.get_buffer()
+
+        log_scroll = Gtk.ScrolledWindow()
+        log_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        log_scroll.set_child(self._logview)
+        log_box.append(log_scroll)
+
+        log_row.set_child(log_box)
+        log_group.add(log_row)
+
+    # -----------------------------------------------------------------------
+    # Widget fabrika yardımcıları
+    # -----------------------------------------------------------------------
+
+    def _make_switch_row(self, group: Adw.PreferencesGroup, title: str, subtitle: str):
+        """Adw.ActionRow + Gtk.Switch çifti oluşturur."""
+        # M4K: Switch row factory; Adw.SwitchRow yerine kullanıldı (uyumluluk)
+        row = Adw.ActionRow()
+        row.set_title(title)
+        row.set_subtitle(subtitle)
+        sw = Gtk.Switch()
+        sw.set_valign(Gtk.Align.CENTER)
+        row.add_suffix(sw)
+        row.set_activatable_widget(sw)
+        group.add(row)
+        return sw, row
+
+    def _make_telemetry_row(self, group: Adw.PreferencesGroup, title: str, icon: str) -> Gtk.Label:
+        """Telemetri değer satırı oluşturur; değer etiketi döndürür."""
+        row = Adw.ActionRow()
+        row.set_title(title)
+        lbl = Gtk.Label(label="—")
+        lbl.add_css_class("dim-label")
+        lbl.add_css_class("numeric")
+        row.add_suffix(lbl)
+        group.add(row)
+        return lbl
+
+    # -----------------------------------------------------------------------
+    # Profil UI
+    # -----------------------------------------------------------------------
+
+    def _refresh_profiles_list(self) -> None:
+        """Profil listesini ve dropdown'ı yeniden çizer."""
+        # M4K: mevcut satırlar temizlenip yeniden oluşturuluyor; dinamik profil listesi
+        for row in self._profile_rows:
+            self._profiles_group.remove(row)
+        self._profile_rows = []
+
+        profiles = self._ctrl.get_profiles()
+
+        # Dropdown güncelle
+        names = ["— Select Profile —"] + [p.name for p in profiles]
+        new_model = Gtk.StringList.new(names)
+        self._profile_dropdown.set_model(new_model)
+        self._profile_string_list = new_model
+
+        if not profiles:
+            empty = Adw.ActionRow()
+            empty.set_title("No profiles yet")
+            empty.set_subtitle("Click the save icon in the header to create one")
+            self._profiles_group.add(empty)
+            self._profile_rows.append(empty)
             return
-        line = f"{core.APP_TAG} [{level}] {msg}\n"
 
-        def _append():
-            self.buf.insert(self.buf.get_end_iter(), line)
-            self.textview.scroll_mark_onscreen(
-                self.buf.create_mark(None, self.buf.get_end_iter(), True)
-            )
-            return False
+        for profile in profiles:
+            row = Adw.ActionRow()
+            row.set_title(profile.name)
+            row.set_subtitle(f"PRIME: {profile.prime_mode}  ·  comp: {'✓' if profile.comp_pipeline else '✗'}  ·  rgb: {'✓' if profile.full_rgb else '✗'}")
 
-        GLib.idle_add(_append)
+            load_btn = Gtk.Button(icon_name="document-open-symbolic")
+            load_btn.set_valign(Gtk.Align.CENTER)
+            load_btn.add_css_class("flat")
+            load_btn.set_tooltip_text(f"Load '{profile.name}'")
+            load_btn.connect("clicked", lambda _, p=profile: self._load_profile(p))
 
+            del_btn = Gtk.Button(icon_name="user-trash-symbolic")
+            del_btn.set_valign(Gtk.Align.CENTER)
+            del_btn.add_css_class("flat")
+            del_btn.add_css_class("destructive-action")
+            del_btn.set_tooltip_text(f"Delete '{profile.name}'")
+            del_btn.connect("clicked", lambda _, name=profile.name: self._delete_profile(name))
 
-# ---------------------------------------------------------------------------
-# GPUSwitcherApp
-# ---------------------------------------------------------------------------
+            row.add_suffix(load_btn)
+            row.add_suffix(del_btn)
+            self._profiles_group.add(row)
+            self._profile_rows.append(row)
 
-class GPUSwitcherApp(Gtk.Application):
-    # M4K: GPUSwitcherApp gpu-switcher.py'den taşındı; sabitler config'den geliyor
+    def _load_profile(self, profile: GpuProfile) -> None:
+        """Profil ayarlarını widget'lara yansıtır."""
+        # M4K: profil yüklenince tüm widget state'leri güncelleniyor
+        self._set_prime_radio(profile.prime_mode)
+        self._sw_comp.set_active(profile.comp_pipeline)
+        self._sw_fullrgb.set_active(profile.full_rgb)
+        self._sw_autostart.set_active(profile.autostart)
+        self._sw_persist.set_active(profile.persistence)
+        self._ent_min.set_text(str(profile.min_clk) if profile.min_clk else "")
+        self._ent_max.set_text(str(profile.max_clk) if profile.max_clk else "")
+        self._show_toast(f"Profile '{profile.name}' loaded")
+        self._log("INFO", f"Profile loaded: {profile.name}")
 
-    def __init__(self):
-        super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.FLAGS_NONE)
-        self.window: Optional[Gtk.ApplicationWindow] = None
+    def _delete_profile(self, name: str) -> None:
+        self._ctrl.delete_profile(name)
+        self._refresh_profiles_list()
+        self._show_toast(f"Profile '{name}' deleted")
 
-        # M4K: runtime state business logic katmanından alınıyor
-        self.output_name = core.detect_display_output()
-        self.prime_mode = core.detect_prime_mode()
+    # -----------------------------------------------------------------------
+    # Sinyal işleyiciler
+    # -----------------------------------------------------------------------
 
-        self.rb_intel = None
-        self.rb_ondemand = None
-        self.rb_nvidia = None
-        self.chk_comp = None
-        self.chk_fullrgb = None
-        self.chk_autostart = None
-        self.chk_persist = None
-        self.ent_min = None
-        self.ent_max = None
-        self.lbl_out = None
-        self.lbl_prime = None
-        self.lbl_temp = None
-        self.lbl_clk = None
-        self.lbl_fan = None
-        self.lbl_pwr = None
-        self.logview = None
-        self.logbuf = None
-        self.telemetry_timer_id = None
+    def _on_profile_dropdown_changed(self, dropdown: Gtk.DropDown, _param) -> None:
+        idx = dropdown.get_selected()
+        if idx == 0:
+            return
+        profiles = self._ctrl.get_profiles()
+        if 0 < idx <= len(profiles):
+            self._load_profile(profiles[idx - 1])
 
-    # ------------------------ GTK lifecycle ---------------------------------
+    def _on_save_profile_clicked(self, _btn) -> None:
+        """Mevcut ayarları profil olarak kaydetmek için dialog açar."""
+        # M4K: Adw.MessageDialog ile modal kayıt dialog'u oluşturuldu
+        dialog = Adw.MessageDialog(
+            transient_for=self,
+            heading="Save Profile",
+            body="Enter a name for this GPU profile:",
+        )
+        entry = Gtk.Entry()
+        entry.set_placeholder_text("e.g. Gaming, Battery Saver, Presentation")
+        dialog.set_extra_child(entry)
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("save", "Save")
+        dialog.set_response_appearance("save", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("save")
+        dialog.set_close_response("cancel")
 
-    def do_activate(self, *args, **kwargs):
-        if not self.window:
-            self.window = Gtk.ApplicationWindow(application=self)
-            self.window.set_title("GPU Switcher")
-            # M4K: pencere boyutu config'den okunuyor
-            self.window.set_default_size(_WIN_W, _WIN_H)
-
-            hb = Gtk.HeaderBar()
-            hb.set_title("GPU Switcher")
-            hb.set_show_close_button(True)
-            self.window.set_titlebar(hb)
-
-            root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-            root.set_border_width(10)
-            self.window.add(root)
-
-            # ----- System & Display -----
-            frame_sys = Gtk.Frame()
-            lbl_sys = Gtk.Label()
-            lbl_sys.set_use_markup(True)
-            lbl_sys.set_markup("<big><b>System &amp; Display</b></big>")
-            frame_sys.set_label_widget(lbl_sys)
-            root.pack_start(frame_sys, False, False, 0)
-
-            box_sys = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-            if hasattr(box_sys, "set_margin_start"):
-                box_sys.set_margin_start(8)
-                box_sys.set_margin_end(8)
-            box_sys.set_margin_top(8)
-            box_sys.set_margin_bottom(8)
-            frame_sys.add(box_sys)
-
-            grid_sys = Gtk.Grid(column_spacing=10, row_spacing=6)
-            box_sys.pack_start(grid_sys, False, False, 0)
-
-            grid_sys.attach(Gtk.Label(label="Active display output:"), 0, 0, 1, 1)
-            self.lbl_out = Gtk.Label(label=self.output_name)
-            self.lbl_out.set_selectable(True)
-            grid_sys.attach(self.lbl_out, 1, 0, 1, 1)
-
-            grid_sys.attach(Gtk.Label(label="Current PRIME mode:"), 0, 1, 1, 1)
-            self.lbl_prime = Gtk.Label(label=self.prime_mode)
-            grid_sys.attach(self.lbl_prime, 1, 1, 1, 1)
-
-            rb_box = Gtk.Box(spacing=10)
-            self.rb_intel = Gtk.RadioButton.new_with_label_from_widget(None, "intel")
-            self.rb_ondemand = Gtk.RadioButton.new_from_widget(self.rb_intel)
-            self.rb_ondemand.set_label("on-demand")
-            self.rb_nvidia = Gtk.RadioButton.new_from_widget(self.rb_intel)
-            self.rb_nvidia.set_label("nvidia")
-            rb_box.pack_start(self.rb_intel, False, False, 0)
-            rb_box.pack_start(self.rb_ondemand, False, False, 0)
-            rb_box.pack_start(self.rb_nvidia, False, False, 0)
-            grid_sys.attach(Gtk.Label(label="Select PRIME:"), 0, 2, 1, 1)
-            grid_sys.attach(rb_box, 1, 2, 1, 1)
-
-            if self.prime_mode == "intel":
-                self.rb_intel.set_active(True)
-            elif self.prime_mode == "nvidia":
-                self.rb_nvidia.set_active(True)
-            else:
-                self.rb_ondemand.set_active(True)
-
-            # ----- NVIDIA Tweaks -----
-            frame_nv = Gtk.Frame()
-            lbl_nv = Gtk.Label()
-            lbl_nv.set_use_markup(True)
-            lbl_nv.set_markup("<big><b>NVIDIA Display Tweaks</b></big>")
-            frame_nv.set_label_widget(lbl_nv)
-            root.pack_start(frame_nv, False, False, 0)
-
-            box_nv = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-            if hasattr(box_nv, "set_margin_start"):
-                box_nv.set_margin_start(8)
-                box_nv.set_margin_end(8)
-            box_nv.set_margin_top(8)
-            box_nv.set_margin_bottom(8)
-            frame_nv.add(box_nv)
-
-            grid_nv = Gtk.Grid(column_spacing=10, row_spacing=6)
-            box_nv.pack_start(grid_nv, False, False, 0)
-
-            self.chk_comp = Gtk.CheckButton(label="Force Composition Pipeline (tear-free)")
-            self.chk_fullrgb = Gtk.CheckButton(label="Force RGB Full Range")
-            self.chk_autostart = Gtk.CheckButton(label="Save composition pipeline to Autostart")
-            self.chk_persist = Gtk.CheckButton(label="Enable Persistence Mode")
-
-            # M4K: autostart_exists() artık gpu_core'dan çağrılıyor
-            self.chk_autostart.set_active(core.autostart_exists())
-
-            grid_nv.attach(self.chk_comp, 0, 0, 2, 1)
-            grid_nv.attach(self.chk_fullrgb, 0, 1, 2, 1)
-            grid_nv.attach(self.chk_autostart, 0, 2, 2, 1)
-            grid_nv.attach(self.chk_persist, 0, 3, 2, 1)
-
-            grid_nv.attach(Gtk.Label(label="Locked Clocks (MHz, optional):"), 0, 4, 1, 1)
-            clk_box = Gtk.Box(spacing=6)
-            self.ent_min = Gtk.Entry()
-            self.ent_min.set_placeholder_text("min (e.g. 1200)")
-            self.ent_max = Gtk.Entry()
-            self.ent_max.set_placeholder_text("max (e.g. 1500)")
-            clk_box.pack_start(self.ent_min, False, False, 0)
-            clk_box.pack_start(self.ent_max, False, False, 0)
-            grid_nv.attach(clk_box, 1, 4, 1, 1)
-
-            btn_apply = Gtk.Button(label="Apply")
-            btn_apply.connect("clicked", self.on_apply_clicked)
-            box_nv.pack_start(btn_apply, False, False, 0)
-
-            # ----- Telemetry -----
-            frame_tm = Gtk.Frame()
-            lbl_tm = Gtk.Label()
-            lbl_tm.set_use_markup(True)
-            lbl_tm.set_markup("<big><b>Telemetry</b></big>")
-            frame_tm.set_label_widget(lbl_tm)
-            root.pack_start(frame_tm, False, False, 0)
-
-            box_tm = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-            if hasattr(box_tm, "set_margin_start"):
-                box_tm.set_margin_start(8)
-                box_tm.set_margin_end(8)
-            box_tm.set_margin_top(8)
-            box_tm.set_margin_bottom(8)
-            frame_tm.add(box_tm)
-
-            grid_tm = Gtk.Grid(column_spacing=10, row_spacing=6)
-            box_tm.pack_start(grid_tm, False, False, 0)
-
-            self.lbl_temp = Gtk.Label(label="Temp: -")
-            self.lbl_clk = Gtk.Label(label="Clock: -")
-            self.lbl_fan = Gtk.Label(label="Fan: -")
-            self.lbl_pwr = Gtk.Label(label="Power: -")
-
-            grid_tm.attach(self.lbl_temp, 0, 0, 1, 1)
-            grid_tm.attach(self.lbl_clk, 1, 0, 1, 1)
-            grid_tm.attach(self.lbl_fan, 2, 0, 1, 1)
-            grid_tm.attach(self.lbl_pwr, 3, 0, 1, 1)
-
-            # ----- Output/Log -----
-            frame_out = Gtk.Frame()
-            lbl_outf = Gtk.Label()
-            lbl_outf.set_use_markup(True)
-            lbl_outf.set_markup("<big><b>Output</b></big>")
-            frame_out.set_label_widget(lbl_outf)
-            root.pack_start(frame_out, True, True, 0)
-
-            box_out = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-            if hasattr(box_out, "set_margin_start"):
-                box_out.set_margin_start(8)
-                box_out.set_margin_end(8)
-            box_out.set_margin_top(8)
-            box_out.set_margin_bottom(8)
-            frame_out.add(box_out)
-
-            level_box = Gtk.Box(spacing=6)
-            level_box.pack_start(Gtk.Label(label="Log level:"), False, False, 0)
-            cmb = Gtk.ComboBoxText()
-            for lv in ["DEBUG", "INFO", "WARN", "ERROR"]:
-                cmb.append_text(lv)
-            cmb.set_active(1)
-            cmb.connect("changed", self.on_log_level_changed)
-            level_box.pack_start(cmb, False, False, 0)
-            box_out.pack_start(level_box, False, False, 0)
-
-            self.logview = Gtk.TextView()
-            self.logview.set_editable(False)
-            self.logview.set_monospace(True)
-            sc = Gtk.ScrolledWindow()
-            sc.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-            sc.add(self.logview)
-            box_out.pack_start(sc, True, True, 0)
-
-            self.logbuf = LogBuffer(self.logview)
-
-            footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-            info = Gtk.Label(label="Tip: Switching PRIME may require reboot or logout/login.")
-            footer.pack_start(info, False, False, 0)
-            root.pack_start(footer, False, False, 0)
-
-            self.window.connect("destroy", self.on_destroy)
-            self.window.show_all()
-
-            # M4K: telemetri yenileme aralığı config'den okunuyor
-            if core.have("nvidia-smi"):
-                self.telemetry_timer_id = GLib.timeout_add_seconds(
-                    _TELE_REFRESH, self.refresh_telemetry
+        def _on_response(d, response):
+            name = entry.get_text().strip()
+            if response == "save" and name:
+                min_txt = self._ent_min.get_text().strip()
+                max_txt = self._ent_max.get_text().strip()
+                profile = GpuProfile(
+                    name=name,
+                    prime_mode=self._get_prime_radio(),
+                    comp_pipeline=self._sw_comp.get_active(),
+                    full_rgb=self._sw_fullrgb.get_active(),
+                    autostart=self._sw_autostart.get_active(),
+                    persistence=self._sw_persist.get_active(),
+                    min_clk=int(min_txt) if min_txt.isdigit() else None,
+                    max_clk=int(max_txt) if max_txt.isdigit() else None,
                 )
-            else:
-                self.logbuf.log("WARN", "nvidia-smi not found; telemetry disabled.")
+                self._ctrl.save_profile(profile)
+                self._refresh_profiles_list()
+                self._show_toast(f"Profile '{name}' saved")
+                self._log("INFO", f"Profile saved: {name}")
 
-            self.logbuf.log("INFO", f"Detected display: {self.output_name}")
-            self.logbuf.log("INFO", f"Detected PRIME mode: {self.prime_mode}")
+        dialog.connect("response", _on_response)
+        dialog.present()
 
-        self.window.present()
+    def _on_log_level_changed(self, dropdown: Gtk.DropDown, _param) -> None:
+        self._min_log_level = dropdown.get_selected()
 
-    # ------------------------ Sinyal işleyiciler ----------------------------
+    def _on_apply_clicked(self, _btn) -> None:
+        """Apply butonuna basıldığında async apply başlatır."""
+        if self._applying:
+            return
 
-    def on_destroy(self, *args):
-        if self.telemetry_timer_id is not None:
-            GLib.source_remove(self.telemetry_timer_id)
-            self.telemetry_timer_id = None
+        min_txt = self._ent_min.get_text().strip()
+        max_txt = self._ent_max.get_text().strip()
 
-    def on_log_level_changed(self, combo: Gtk.ComboBoxText):
-        txt = combo.get_active_text()
-        if txt:
-            self.logbuf.set_level_by_name(txt)
+        settings = ApplySettings(
+            prime_mode=self._get_prime_radio(),
+            comp_pipeline=self._sw_comp.get_active(),
+            full_rgb=self._sw_fullrgb.get_active(),
+            autostart=self._sw_autostart.get_active(),
+            persistence=self._sw_persist.get_active(),
+            min_clk=int(min_txt) if min_txt.isdigit() else None,
+            max_clk=int(max_txt) if max_txt.isdigit() else None,
+        )
 
-    def on_apply_clicked(self, btn):
-        # M4K: tüm apply çağrıları artık gpu_core modülünden yapılıyor
-        target_prime = "on-demand"
-        if self.rb_intel.get_active():
-            target_prime = "intel"
-        elif self.rb_nvidia.get_active():
-            target_prime = "nvidia"
+        self._set_applying(True)
 
-        if target_prime != self.prime_mode:
-            self.logbuf.log("INFO", f"Switching PRIME to '{target_prime}'...")
-            core.apply_prime(target_prime, self.logbuf.log)
-            self.prime_mode = core.detect_prime_mode()
-            self.lbl_prime.set_text(self.prime_mode)
+        # M4K: log callback GLib.idle_add içine sarıldı; GUI thread'i dışından çağrı güvenli
+        def _on_log(level: str, msg: str):
+            GLib.idle_add(lambda: self._log(level, msg))
 
-        if self.chk_comp.get_active():
-            self.logbuf.log("INFO", f"Applying ForceCompositionPipeline on {self.output_name}...")
-            core.apply_force_comp_pipeline(self.output_name, self.logbuf.log)
+        def _on_done(success: bool):
+            def _finish():
+                self._set_applying(False)
+                self._display_row.set_subtitle(self._ctrl.output_name)
+                if success:
+                    self._show_toast("Settings applied successfully")
+                else:
+                    self._show_toast("Apply failed — check the log")
+            GLib.idle_add(_finish)
 
-        if self.chk_fullrgb.get_active():
-            self.logbuf.log("INFO", "Applying Full RGB range...")
-            core.apply_full_rgb(self.logbuf.log)
+        self._ctrl.apply_async(settings, _on_log, _on_done)
 
-        if self.chk_autostart.get_active():
-            core.install_autostart(self.output_name, self.logbuf.log)
+    # -----------------------------------------------------------------------
+    # Yardımcı metodlar
+    # -----------------------------------------------------------------------
+
+    def _set_prime_radio(self, mode: str) -> None:
+        if mode == "intel":
+            self._rb_intel.set_active(True)
+        elif mode == "nvidia":
+            self._rb_nvidia.set_active(True)
         else:
-            core.remove_autostart(self.logbuf.log)
+            self._rb_ondemand.set_active(True)
 
-        core.set_persistence_mode(self.chk_persist.get_active(), self.logbuf.log)
+    def _get_prime_radio(self) -> str:
+        if self._rb_intel.get_active():
+            return "intel"
+        if self._rb_nvidia.get_active():
+            return "nvidia"
+        return "on-demand"
 
-        min_txt = self.ent_min.get_text().strip()
-        max_txt = self.ent_max.get_text().strip()
-        min_mhz = int(min_txt) if min_txt.isdigit() else None
-        max_mhz = int(max_txt) if max_txt.isdigit() else None
-        if min_mhz and max_mhz:
-            core.set_locked_clocks(min_mhz, max_mhz, self.logbuf.log)
+    def _set_applying(self, applying: bool) -> None:
+        """Apply butonunu ve spinner'ı async durumuyla senkronize eder."""
+        # M4K: apply sırasında buton devre dışı bırakılıyor; çift tıklama önleniyor
+        self._applying = applying
+        self._apply_btn.set_sensitive(not applying)
+        if applying:
+            self._spinner.start()
+        else:
+            self._spinner.stop()
 
-        self.logbuf.log("INFO", "Apply finished.")
+    def _log(self, level: str, msg: str) -> None:
+        level_idx = _LOG_LEVELS.index(level) if level in _LOG_LEVELS else 1
+        if level_idx < self._min_log_level:
+            return
+        import gpu_core as core
+        line = f"{core.APP_TAG} [{level}] {msg}\n"
+        end = self._logbuf.get_end_iter()
+        self._logbuf.insert(end, line)
+        end2 = self._logbuf.get_end_iter()
+        self._logview.scroll_to_iter(end2, 0.0, False, 0.0, 1.0)
 
-    def refresh_telemetry(self) -> bool:
-        # M4K: telemetri verisi gpu_core.fetch_nvidia_telemetry() üzerinden alınıyor
-        tele = core.fetch_nvidia_telemetry()
-        t = f"Temp: {tele.tempC:.0f} °C" if tele.tempC is not None else "Temp: -"
-        c = f"Clock: {tele.clkMHz:.0f} MHz" if tele.clkMHz is not None else "Clock: -"
+    def _show_toast(self, msg: str) -> None:
+        """Adw.Toast bildirimi gösterir."""
+        toast = Adw.Toast(title=msg)
+        toast.set_timeout(3)
+        self._toast_overlay.add_toast(toast)
+
+    def _refresh_system_info(self) -> None:
+        self._ctrl.detect_display()
+        self._ctrl.detect_prime()
+        self._display_row.set_subtitle(self._ctrl.output_name)
+        self._set_prime_radio(self._ctrl.prime_mode)
+        self._log("INFO", f"Refreshed: display={self._ctrl.output_name}, PRIME={self._ctrl.prime_mode}")
+
+    def _start_telemetry(self) -> None:
+        import gpu_core as core
+        if core.have("nvidia-smi"):
+            # M4K: telemetri timer arka planda çalışıyor; GUI thread'ini bloklamıyor
+            self._telemetry_timer_id = GLib.timeout_add_seconds(
+                _TELE_REFRESH, self._on_telemetry_tick
+            )
+        else:
+            self._log("WARN", "nvidia-smi not found; telemetry disabled.")
+        self._log("INFO", f"Display: {self._ctrl.output_name}")
+        self._log("INFO", f"PRIME mode: {self._ctrl.prime_mode}")
+
+    def _on_telemetry_tick(self) -> bool:
+        """Telemetri değerlerini günceller; GLib timer callback'i."""
+        tele = self._ctrl.refresh_telemetry()
+        self._lbl_temp.set_text(f"{tele.tempC:.0f} °C" if tele.tempC is not None else "—")
+        self._lbl_clk.set_text(f"{tele.clkMHz:.0f} MHz" if tele.clkMHz is not None else "—")
 
         if tele.fanPct is not None:
-            f = f"Fan: {tele.fanPct:.0f} %"
+            self._lbl_fan.set_text(f"{tele.fanPct:.0f} %")
         elif tele.fanRaw and tele.fanRaw.upper() == "N/A":
-            f = "Fan: N/A"
+            self._lbl_fan.set_text("N/A")
         else:
-            f = "Fan: -"
+            self._lbl_fan.set_text("—")
 
         if tele.pwrW is not None and tele.pwrCap is not None:
-            p = f"Power: {tele.pwrW:.1f} / {tele.pwrCap:.1f} W"
+            self._lbl_pwr.set_text(f"{tele.pwrW:.1f} / {tele.pwrCap:.1f} W")
         elif tele.pwrW is not None:
-            p = f"Power: {tele.pwrW:.1f} W"
+            self._lbl_pwr.set_text(f"{tele.pwrW:.1f} W")
         else:
-            p = "Power: N/A"
+            self._lbl_pwr.set_text("—")
 
-        self.lbl_temp.set_text(t)
-        self.lbl_clk.set_text(c)
-        self.lbl_fan.set_text(f)
-        self.lbl_pwr.set_text(p)
-        return True
+        return True  # timer'ı sürdür
+
+    def do_close_request(self) -> bool:
+        # M4K: pencere kapanırken telemetri timer temizleniyor; kaynak sızıntısı önlendi
+        if self._telemetry_timer_id is not None:
+            GLib.source_remove(self._telemetry_timer_id)
+            self._telemetry_timer_id = None
+        return False
 
 
 # ---------------------------------------------------------------------------
-# Giriş noktası
+# Uygulama
 # ---------------------------------------------------------------------------
 
-def main():
-    # M4K: main() gpu_gui'ye taşındı; gpu-switcher.py sadece bunu çağırır
-    app = GPUSwitcherApp()
+class GpuSwitcherApp(Adw.Application):
+    """GTK4 + libadwaita uygulama nesnesi."""
+
+    def __init__(self):
+        # M4K: Gtk.Application yerine Adw.Application kullanıldı; tema otomatik takip edilir
+        super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.FLAGS_NONE)
+        self._window: Optional[GpuSwitcherWindow] = None
+
+    def do_activate(self) -> None:
+        if not self._window:
+            controller = GpuController()
+            self._window = GpuSwitcherWindow(self, controller)
+        self._window.present()
+
+
+def main() -> None:
+    app = GpuSwitcherApp()
     sys.exit(app.run(sys.argv))
 
 

@@ -214,5 +214,116 @@ class TestAutostart(unittest.TestCase):
         self.assertTrue(result)
 
 
+# ---------------------------------------------------------------------------
+# GpuController testleri
+# ---------------------------------------------------------------------------
+
+class TestGpuController(unittest.TestCase):
+    """gpu_controller.GpuController için birim testler."""
+
+    def setUp(self):
+        # M4K: controller testleri için gerçek profil dosyasına dokunmamak adına tmp dizin kullanıldı
+        from gpu_controller import GpuController
+        import gpu_controller as gc_mod
+        self.tmp_dir = tempfile.mkdtemp()
+        self.profiles_path = os.path.join(self.tmp_dir, "profiles.yaml")
+        self._orig_path = gc_mod.PROFILES_PATH
+        gc_mod.PROFILES_PATH = self.profiles_path
+
+        with patch("gpu_core.detect_display_output", return_value="HDMI-1"), \
+             patch("gpu_core.detect_prime_mode", return_value="on-demand"):
+            self.ctrl = GpuController()
+
+    def tearDown(self):
+        import gpu_controller as gc_mod
+        gc_mod.PROFILES_PATH = self._orig_path
+
+    # M4K: başlangıçta profil listesinin boş olduğu doğrulandı
+    def test_initial_profiles_empty(self):
+        self.assertEqual(self.ctrl.get_profiles(), [])
+
+    # M4K: profil kaydedilince listede göründüğü doğrulandı
+    def test_save_and_get_profile(self):
+        from gpu_controller import GpuProfile
+        p = GpuProfile(name="Gaming", prime_mode="nvidia", comp_pipeline=True)
+        self.ctrl.save_profile(p)
+        profiles = self.ctrl.get_profiles()
+        self.assertEqual(len(profiles), 1)
+        self.assertEqual(profiles[0].name, "Gaming")
+        self.assertEqual(profiles[0].prime_mode, "nvidia")
+
+    # M4K: aynı isimli profil üzerine yazılınca liste uzunluğu değişmemeli
+    def test_save_profile_overwrites_same_name(self):
+        from gpu_controller import GpuProfile
+        self.ctrl.save_profile(GpuProfile(name="Test", prime_mode="intel"))
+        self.ctrl.save_profile(GpuProfile(name="Test", prime_mode="nvidia"))
+        profiles = self.ctrl.get_profiles()
+        self.assertEqual(len(profiles), 1)
+        self.assertEqual(profiles[0].prime_mode, "nvidia")
+
+    # M4K: profil silinince listeden kalktığı doğrulandı
+    def test_delete_profile(self):
+        from gpu_controller import GpuProfile
+        self.ctrl.save_profile(GpuProfile(name="ToDelete"))
+        self.ctrl.delete_profile("ToDelete")
+        self.assertEqual(self.ctrl.get_profiles(), [])
+
+    # M4K: var olmayan profil silinmeye çalışılınca hata fırlatılmıyor
+    def test_delete_nonexistent_profile_is_safe(self):
+        result = self.ctrl.delete_profile("ghost")
+        self.assertIsNotNone(result)
+
+    # M4K: kaydedilen profil dosyadan tekrar okunabiliyor (kalıcılık testi)
+    def test_profile_persistence(self):
+        from gpu_controller import GpuProfile, GpuController
+        import gpu_controller as gc_mod
+        self.ctrl.save_profile(GpuProfile(name="Persist", prime_mode="nvidia", full_rgb=True))
+
+        with patch("gpu_core.detect_display_output", return_value="HDMI-1"), \
+             patch("gpu_core.detect_prime_mode", return_value="on-demand"):
+            ctrl2 = GpuController()
+        profiles = ctrl2.get_profiles()
+        self.assertEqual(len(profiles), 1)
+        self.assertEqual(profiles[0].name, "Persist")
+        self.assertTrue(profiles[0].full_rgb)
+
+    # M4K: async apply başlatılınca on_done callback'inin çağrıldığı doğrulandı
+    def test_apply_async_calls_on_done(self):
+        import time
+        from gpu_controller import ApplySettings
+        done_results = []
+
+        settings = ApplySettings(
+            prime_mode="on-demand",
+            comp_pipeline=False,
+            full_rgb=False,
+            autostart=False,
+            persistence=False,
+            min_clk=None,
+            max_clk=None,
+        )
+
+        with patch("gpu_core.apply_prime"), \
+             patch("gpu_core.apply_force_comp_pipeline"), \
+             patch("gpu_core.apply_full_rgb"), \
+             patch("gpu_core.install_autostart"), \
+             patch("gpu_core.remove_autostart"), \
+             patch("gpu_core.set_persistence_mode"), \
+             patch("gpu_core.set_locked_clocks"):
+            self.ctrl.apply_async(
+                settings,
+                on_log=lambda level, msg: None,
+                on_done=lambda success: done_results.append(success),
+            )
+            # M4K: thread tamamlanana kadar bekleniyor (max 2s)
+            for _ in range(20):
+                if done_results:
+                    break
+                time.sleep(0.1)
+
+        self.assertEqual(len(done_results), 1)
+        self.assertTrue(done_results[0])
+
+
 if __name__ == "__main__":
     unittest.main()
